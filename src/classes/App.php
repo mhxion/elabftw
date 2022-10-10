@@ -12,6 +12,7 @@ namespace Elabftw\Elabftw;
 use function basename;
 use function bindtextdomain;
 use function dirname;
+use Elabftw\Enums\Language;
 use Elabftw\Exceptions\UnauthorizedException;
 use Elabftw\Models\AnonymousUser;
 use Elabftw\Models\AuthenticatedUser;
@@ -19,7 +20,6 @@ use Elabftw\Models\Config;
 use Elabftw\Models\Notifications;
 use Elabftw\Models\Teams;
 use Elabftw\Models\Users;
-use Elabftw\Services\Check;
 use Elabftw\Traits\TwigTrait;
 use Elabftw\Traits\UploadTrait;
 use function in_array;
@@ -43,15 +43,13 @@ class App
     use UploadTrait;
     use TwigTrait;
 
-    public const INSTALLED_VERSION = '4.3.9';
+    public const INSTALLED_VERSION = '4.4.0-alpha';
 
     public Users $Users;
 
     public string $pageTitle = 'Lab manager';
 
-    public string $linkName = 'Documentation';
-
-    public string $linkHref = 'https://doc.elabftw.net';
+    public array $teamArr = array();
 
     public array $ok = array();
 
@@ -106,7 +104,6 @@ class App
                 'index.php',
                 'logout.php',
                 'make.php',
-                'RequestHandler.php',
                 'search.php',
             );
             if (!in_array(basename($this->Request->getScriptName()), $allowedPages, true)) {
@@ -153,6 +150,11 @@ class App
         return $this->Config->configArr['lang'];
     }
 
+    public function getJsLang(): string
+    {
+        return Language::toCalendar(Language::tryFrom($this->getLang()) ?? Language::English);
+    }
+
     /**
      * Load a user object in our user field
      */
@@ -161,16 +163,15 @@ class App
         $this->Users = $users;
         // we have an user in a team, load the top menu link
         $Teams = new Teams($this->Users);
-        $teamConfigArr = $Teams->read(new ContentParams());
-        $this->linkName = $teamConfigArr['link_name'];
-        $this->linkHref = $teamConfigArr['link_href'];
+        $this->teamArr = $Teams->readOne();
         // Notifs
         $Notifications = new Notifications($this->Users);
-        $this->notifsArr = $Notifications->read(new ContentParams());
+        $this->notifsArr = $Notifications->readAll();
     }
 
     /**
      * Configure gettext domain
+     * @psalm-suppress UnusedFunctionCall
      */
     private function initi18n(): void
     {

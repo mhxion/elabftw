@@ -10,19 +10,17 @@
 namespace Elabftw\Services;
 
 use function date;
-use DateTime;
-use Elabftw\Elabftw\ContentParams;
+use DateTimeImmutable;
 use Elabftw\Elabftw\CreateNotificationParams;
 use Elabftw\Elabftw\FsTools;
 use Elabftw\Elabftw\Tools;
-use Elabftw\Interfaces\FileMakerInterface;
+use Elabftw\Factories\StorageFactory;
 use Elabftw\Interfaces\MpdfProviderInterface;
 use Elabftw\Models\AbstractEntity;
 use Elabftw\Models\Config;
 use Elabftw\Models\Experiments;
 use Elabftw\Models\Notifications;
 use Elabftw\Models\Users;
-use Elabftw\Traits\PdfTrait;
 use Elabftw\Traits\TwigTrait;
 use Elabftw\Traits\UploadTrait;
 use function implode;
@@ -32,15 +30,13 @@ use setasign\Fpdi\FpdiException;
 use const SITE_URL;
 use function str_replace;
 use function strtolower;
-use Symfony\Component\HttpFoundation\Request;
 
 /**
  * Create a pdf from an Entity
  */
-class MakePdf extends AbstractMake implements FileMakerInterface
+class MakePdf extends AbstractMakePdf
 {
     use TwigTrait;
-    use PdfTrait;
     use UploadTrait;
 
     public string $longName;
@@ -50,9 +46,7 @@ class MakePdf extends AbstractMake implements FileMakerInterface
     // collect paths of files to delete
     public array $trash = array();
 
-    // switch to disable notifications from within class
-    // if notifications are handled by calling class
-    public bool $createNotifications = true;
+    protected bool $includeAttachments = false;
 
     private FileSystem $cacheFs;
 
@@ -63,11 +57,10 @@ class MakePdf extends AbstractMake implements FileMakerInterface
      */
     public function __construct(MpdfProviderInterface $mpdfProvider, AbstractEntity $entity)
     {
-        parent::__construct($entity);
+        parent::__construct($mpdfProvider, $entity);
 
         $this->longName = $this->getLongName() . '.pdf';
 
-        $this->mpdf = $mpdfProvider->getInstance();
         $this->mpdf->SetTitle($this->Entity->entityData['title']);
         $this->mpdf->SetKeywords(str_replace('|', ' ', $this->Entity->entityData['tags'] ?? ''));
 
@@ -77,6 +70,9 @@ class MakePdf extends AbstractMake implements FileMakerInterface
         error_reporting(E_ERROR);
 
         $this->cacheFs = (new StorageFactory(StorageFactory::CACHE))->getStorage()->getFs();
+        if ($this->includeAttachments === false && $this->Entity->Users->userData['inc_files_pdf']) {
+            $this->includeAttachments = true;
+        }
     }
 
     public function __destruct()
@@ -93,7 +89,7 @@ class MakePdf extends AbstractMake implements FileMakerInterface
     public function getFileContent(): string
     {
         $output = $this->generate()->Output('', 'S');
-        if ($this->errors && $this->createNotifications) {
+        if ($this->errors && $this->notifications) {
             $Notifications = new Notifications($this->Entity->Users);
             $Notifications->create(new CreateNotificationParams(Notifications::PDF_GENERIC_ERROR));
         }
@@ -106,7 +102,8 @@ class MakePdf extends AbstractMake implements FileMakerInterface
     public function getFileName(): string
     {
         $title = Filter::forFilesystem($this->Entity->entityData['title']);
-        return $this->Entity->entityData['date'] . ' - ' . $title . '.pdf';
+        $now = new DateTimeImmutable();
+        return ($this->Entity->entityData['date'] ?? $now->format('Y-m-d')) . ' - ' . $title . '.pdf';
     }
 
     /**
@@ -127,6 +124,7 @@ class MakePdf extends AbstractMake implements FileMakerInterface
                 ),
             );
         }
+        $this->contentSize = mb_strlen($content);
         return $content;
     }
 
@@ -137,7 +135,7 @@ class MakePdf extends AbstractMake implements FileMakerInterface
      */
     public function getAttachedPdfs(): array
     {
-        $uploadsArr = $this->Entity->Uploads->readAllNormal();
+        $uploadsArr = $this->Entity->entityData['uploads'];
         $listOfPdfs = array();
 
         if (empty($uploadsArr)) {
@@ -214,14 +212,7 @@ class MakePdf extends AbstractMake implements FileMakerInterface
      */
     private function getHtml(): string
     {
-        $Request = Request::createFromGlobals();
-
-        if ($this->Entity->entityData['tags']) {
-            $tags = '<strong>Tags:</strong> <em>' .
-                str_replace('|', ' ', $this->Entity->entityData['tags']) . '</em> <br />';
-        }
-
-        $date = new DateTime($this->Entity->entityData['date'] ?? date('Ymd'));
+        $date = new DateTimeImmutable($this->Entity->entityData['date'] ?? date('Ymd'));
 
         $locked = $this->Entity->entityData['locked'];
         $lockDate = '';
@@ -238,36 +229,30 @@ class MakePdf extends AbstractMake implements FileMakerInterface
         }
 
         // read the content of the thumbnail here to feed the template
-        $uploadsArr = $this->Entity->Uploads->readAllNormal();
-        foreach ($uploadsArr as $key => $upload) {
+        foreach ($this->Entity->entityData['uploads'] as $key => $upload) {
             $storageFs = (new StorageFactory((int) $upload['storage']))->getStorage()->getFs();
             $thumbnail = $upload['long_name'] . '_th.jpg';
             // no need to filter on extension, just insert the thumbnail if it exists
             if ($storageFs->fileExists($thumbnail)) {
-                $uploadsArr[$key]['base64_thumbnail'] = base64_encode($storageFs->read($thumbnail));
+                $this->Entity->entityData['uploads'][$key]['base64_thumbnail'] = base64_encode($storageFs->read($thumbnail));
             }
         }
 
         $renderArr = array(
             'body' => $this->getBody(),
-            'commentsArr' => $this->Entity->Comments->read(new ContentParams()),
             'css' => $this->getCss(),
             'date' => $date->format('Y-m-d'),
-            'elabid' => $this->Entity->entityData['elabid'],
-            'fullname' => $this->Entity->entityData['fullname'],
-            'includeFiles' => $this->Entity->Users->userData['inc_files_pdf'],
-            'linksArr' => $this->Entity->Links->read(new ContentParams()),
+            'entityData' => $this->Entity->entityData,
+            'includeFiles' => $this->includeAttachments,
             'locked' => $locked,
             'lockDate' => $lockDate,
             'lockerName' => $lockerName,
-            'metadata' => $this->Entity->entityData['metadata'],
-            'pdfSig' => $Request->cookies->get('pdf_sig'),
-            'stepsArr' => $this->Entity->Steps->read(new ContentParams()),
-            'tags' => $this->Entity->entityData['tags'],
-            'title' => $this->Entity->entityData['title'],
-            'uploadsArr' => $uploadsArr,
+            'pdfSig' => $this->Entity->Users->userData['pdf_sig'],
             'url' => $this->getURL(),
-            'linkBaseUrl' => SITE_URL . '/database.php',
+            'linkBaseUrl' => array(
+                'items' => SITE_URL . '/database.php',
+                'experiments' => SITE_URL . '/experiments.php',
+            ),
             'useCjk' => $this->Entity->Users->userData['cjk_fonts'],
         );
 
@@ -300,11 +285,13 @@ class MakePdf extends AbstractMake implements FileMakerInterface
 
     private function getBody(): string
     {
-        $body = Tools::md2html($this->Entity->entityData['body'] ?? '');
-        // md2html can result in invalid html, see https://github.com/elabftw/elabftw/issues/3076
-        // the next line (HTMLPurifier) rescues the invalid parts and thus avoids some MathJax errors
-        // the consequence is a slightly different layout
-        $body = Filter::body($body);
+        $body = $this->Entity->entityData['body'] ?? '';
+        if ($this->Entity->entityData['content_type'] === AbstractEntity::CONTENT_MD) {
+            // md2html can result in invalid html, see https://github.com/elabftw/elabftw/issues/3076
+            // the Filter::body (HTMLPurifier) rescues the invalid parts and thus avoids some MathJax errors
+            // the consequence is a slightly different layout
+            $body = Filter::body(Tools::md2html($body));
+        }
 
         // now this part of the code will look for embeded images in the text and download them from storage and passes them to mpdf via variables.
         // it would have been preferable to avoid such complexity and regexes, but this is the most robust way to get images in there.

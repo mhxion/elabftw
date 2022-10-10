@@ -9,59 +9,55 @@
 
 namespace Elabftw\Models;
 
-use function copy;
-use Elabftw\Elabftw\ContentParams;
 use Elabftw\Elabftw\CreateUpload;
 use Elabftw\Elabftw\Db;
 use Elabftw\Elabftw\FsTools;
 use Elabftw\Elabftw\Tools;
 use Elabftw\Elabftw\UploadParams;
+use Elabftw\Enums\Action;
+use Elabftw\Enums\FileFromString;
+use Elabftw\Enums\State;
 use Elabftw\Exceptions\IllegalActionException;
 use Elabftw\Exceptions\ImproperActionException;
+use Elabftw\Factories\StorageFactory;
 use Elabftw\Interfaces\ContentParamsInterface;
 use Elabftw\Interfaces\CreateUploadParamsInterface;
-use Elabftw\Interfaces\CrudInterface;
-use Elabftw\Interfaces\UploadParamsInterface;
+use Elabftw\Interfaces\RestInterface;
+use Elabftw\Services\Check;
 use Elabftw\Services\MakeThumbnail;
-use Elabftw\Services\StorageFactory;
-use Elabftw\Traits\SetIdTrait;
 use Elabftw\Traits\UploadTrait;
 use ImagickException;
-use function in_array;
 use League\Flysystem\UnableToRetrieveMetadata;
 use PDO;
 use RuntimeException;
-use Symfony\Component\HttpFoundation\Request;
 
 /**
  * All about the file uploads
  */
-class Uploads implements CrudInterface
+class Uploads implements RestInterface
 {
     use UploadTrait;
-    use SetIdTrait;
-
-    public const STATE_DELETED = 3;
-
-    public const STATE_ARCHIVED = 2;
 
     /** @var int BIG_FILE_THRESHOLD size of a file in bytes above which we don't process it (50 Mb) */
     private const BIG_FILE_THRESHOLD = 50000000;
 
-    private const STATE_NORMAL = 1;
+    public array $uploadData = array();
 
     protected Db $Db;
 
     private string $hashAlgorithm = 'sha256';
 
-    public function __construct(public AbstractEntity $Entity, ?int $id = null)
+    public function __construct(public AbstractEntity $Entity, public ?int $id = null)
     {
         $this->Db = Db::getConnection();
-        $this->id = $id;
+        if ($this->id !== null) {
+            $this->readOne();
+        }
     }
 
     /**
      * Main method for normal file upload
+     * @psalm-suppress UndefinedClass
      */
     public function create(CreateUploadParamsInterface $params): int
     {
@@ -117,98 +113,124 @@ class Uploads implements CrudInterface
         $storageFs->writeStream($longName, $inputStream);
 
         // final sql
-        $id = $this->dbInsert($realName, $longName, $hash, $filesize, $storage, $params->getComment());
+        $sql = 'INSERT INTO uploads(
+            real_name,
+            long_name,
+            comment,
+            item_id,
+            userid,
+            type,
+            hash,
+            hash_algorithm,
+            storage,
+            filesize,
+            immutable
+        ) VALUES(
+            :real_name,
+            :long_name,
+            :comment,
+            :item_id,
+            :userid,
+            :type,
+            :hash,
+            :hash_algorithm,
+            :storage,
+            :filesize,
+            :immutable
+        )';
 
-        // TODO useful?
-        $sourceFs->delete($params->getFilePath());
+        $req = $this->Db->prepare($sql);
+        $req->bindParam(':real_name', $realName);
+        $req->bindParam(':long_name', $longName);
+        $req->bindValue(':comment', $params->getComment());
+        $req->bindParam(':item_id', $this->Entity->id, PDO::PARAM_INT);
+        $req->bindParam(':userid', $this->Entity->Users->userData['userid'], PDO::PARAM_INT);
+        $req->bindParam(':type', $this->Entity->type);
+        $req->bindParam(':hash', $hash);
+        $req->bindParam(':hash_algorithm', $this->hashAlgorithm);
+        $req->bindParam(':storage', $storage, PDO::PARAM_INT);
+        $req->bindParam(':filesize', $filesize, PDO::PARAM_INT);
+        $req->bindValue(':immutable', $params->getImmutable(), PDO::PARAM_INT);
+        $this->Db->execute($req);
 
-        return $id;
+        return $this->Db->lastInsertId();
     }
 
-    /**
-     * Create an upload from a string, from Chemdoodle or Doodle
-     */
-    public function createFromString(string $fileType, string $realName, string $content, ?string $comment = null): int
+    public function read(ContentParamsInterface $params): array
     {
-        $this->Entity->canOrExplode('write');
-
-        $allowedFileTypes = array('pdf', 'png', 'mol', 'json', 'zip');
-        if (!in_array($fileType, $allowedFileTypes, true)) {
-            throw new IllegalActionException('Bad filetype!');
+        if ($params->getTarget() === 'all') {
+            return $this->readAll();
         }
-
-        if ($fileType === 'png') {
-            // get the image in binary
-            $content = str_replace(array('data:image/png;base64,', ' '), array('', '+'), $content);
-            $content = base64_decode($content, true);
-            if ($content === false) {
-                throw new RuntimeException('Could not decode content!');
-            }
+        if ($params->getTarget() === 'uploadid') {
+            $this->id = $this->getIdFromLongname($params->getContent());
         }
-
-        // add file extension if it wasn't provided
-        if (Tools::getExt($realName) === 'unknown') {
-            $realName .= '.' . $fileType;
-        }
-        // create a temporary file so we can upload it using create()
-        $tmpFilePath = FsTools::getCacheFile();
-        $tmpFilePathFs = FsTools::getFs(dirname($tmpFilePath));
-        $tmpFilePathFs->write(basename($tmpFilePath), $content);
-
-        $params = new CreateUpload($realName, $tmpFilePath, $comment);
-        return $this->create($params);
+        return $this->readOne();
     }
 
     /**
      * Read from current id
      */
-    public function read(ContentParamsInterface $params): array
+    public function readOne(): array
     {
-        if ($params->getTarget() === 'all') {
-            return $this->readAllNormal();
-        }
-        if ($params->getTarget() === 'uploadid') {
-            $this->id = $this->getIdFromLongname($params->getContent());
-        }
-
-        $sql = 'SELECT * FROM uploads WHERE id = :id AND state = :state';
+        $sql = 'SELECT uploads.*, CONCAT (users.firstname, " ", users.lastname) AS fullname
+            FROM uploads LEFT JOIN users ON (uploads.userid = users.userid) WHERE id = :id';
         $req = $this->Db->prepare($sql);
         $req->bindParam(':id', $this->id, PDO::PARAM_INT);
-        $req->bindValue(':state', self::STATE_NORMAL, PDO::PARAM_INT);
         $this->Db->execute($req);
-        return $this->Db->fetch($req);
+        $this->uploadData = $this->Db->fetch($req);
+        return $this->uploadData;
     }
 
     /**
-     * Read all uploads for an item
+     * Read only the normal ones (not archived/deleted)
      */
     public function readAll(): array
     {
-        $sql = 'SELECT * FROM uploads WHERE item_id = :id AND type = :type';
+        $sql = 'SELECT uploads.*, CONCAT (users.firstname, " ", users.lastname) AS fullname
+            FROM uploads LEFT JOIN users ON (uploads.userid = users.userid) WHERE item_id = :id AND type = :type AND state = :state';
         $req = $this->Db->prepare($sql);
         $req->bindParam(':id', $this->Entity->id, PDO::PARAM_INT);
         $req->bindParam(':type', $this->Entity->type);
+        $req->bindValue(':state', State::Normal->value, PDO::PARAM_INT);
         $this->Db->execute($req);
 
         return $req->fetchAll();
     }
 
-    public function readAllNormal(): array
+    public function patch(Action $action, array $params): array
     {
-        // we read all but only return the ones with normal state
-        return array_filter($this->readAll(), function ($u) {
-            return ((int) $u['state']) === self::STATE_NORMAL;
-        });
+        $this->canWriteOrExplode();
+        foreach ($params as $key => $value) {
+            $this->update(new UploadParams($key, $value));
+        }
+        return $this->readOne();
     }
 
-    public function update(UploadParamsInterface $params): bool
+    public function postAction(Action $action, array $reqBody): int
     {
-        $this->Entity->canOrExplode('write');
-        $sql = 'UPDATE uploads SET ' . $params->getTarget() . ' = :content WHERE id = :id AND item_id = :item_id';
+        if ($this->id !== null) {
+            $action = Action::Replace;
+        }
+        return match ($action) {
+            // Note: it is not possible to create an upload with a comment because we can't send at the same time json and a file
+            Action::Create => $this->create(new CreateUpload($reqBody['real_name'], $reqBody['filePath'])),
+            Action::CreateFromString => $this->createFromString(FileFromString::from($reqBody['file_type']), $reqBody['real_name'], $reqBody['content']),
+            Action::Replace => $this->replace(new CreateUpload($reqBody['real_name'], $reqBody['filePath'])),
+            default => throw new ImproperActionException('Invalid action for upload creation.'),
+        };
+    }
+
+    public function getPage(): string
+    {
+        return $this->Entity->getPage();
+    }
+
+    public function update(UploadParams $params): bool
+    {
+        $sql = 'UPDATE uploads SET ' . $params->getColumn() . ' = :content WHERE id = :id';
         $req = $this->Db->prepare($sql);
         $req->bindValue(':content', $params->getContent());
         $req->bindParam(':id', $this->id, PDO::PARAM_INT);
-        $req->bindParam(':item_id', $this->Entity->id, PDO::PARAM_INT);
         return $this->Db->execute($req);
     }
 
@@ -217,28 +239,37 @@ class Uploads implements CrudInterface
      */
     public function destroy(): bool
     {
-        // set the check here so entityData gets loaded
-        $this->Entity->canOrExplode('write');
-        $uploadArr = $this->read(new ContentParams());
+        $this->canWriteOrExplode();
         // check that the filename is not in the body. see #432
-        if (strpos($this->Entity->entityData['body'], $uploadArr['long_name'])) {
+        if (strpos($this->Entity->entityData['body'], $this->uploadData['long_name'])) {
             throw new ImproperActionException(_('Please make sure to remove any reference to this file in the body!'));
         }
         return $this->nuke();
     }
 
+    public function setId(int $id): void
+    {
+        if (Check::id($id) === false) {
+            throw new IllegalActionException('The id parameter is not valid!');
+        }
+        $this->id = $id;
+        // load it
+        $this->readOne();
+    }
+
     /**
      * Delete all uploaded files for an entity
      */
-    public function destroyAll(): void
+    public function destroyAll(): bool
     {
         // this will include the archived/deleted ones
         $uploadArr = $this->readAll();
 
         foreach ($uploadArr as $upload) {
-            $this->setId((int) $upload['id']);
+            $this->setId($upload['id']);
             $this->nuke();
         }
+        return true;
     }
 
     public function getStorageFromLongname(string $longname): int
@@ -263,18 +294,58 @@ class Uploads implements CrudInterface
      * Attached files are immutable (change history is kept), so the current
      * file gets its state changed to "archived" and a new one is added
      */
-    public function replace(UploadParamsInterface $params): array
+    private function replace(CreateUpload $params): int
     {
-        $this->Entity->canOrExplode('write');
+        $this->canWriteOrExplode();
         // read the current one to get the comment
-        $upload = $this->read(new ContentParams());
-        $this->update(new UploadParams((string) self::STATE_ARCHIVED, 'state'));
+        $upload = $this->readOne();
+        $this->update(new UploadParams('state', (string) State::Archived->value));
 
-        $file = $params->getFile();
-        $newID = $this->create(new CreateUpload($file->getClientOriginalName(), $file->getPathname(), $upload['comment']));
-        $this->setId((int) $newID);
+        return $this->create(new CreateUpload($params->getFilename(), $params->getFilePath(), $upload['comment']));
+    }
 
-        return $this->read(new ContentParams());
+    /**
+     * Create an upload from a string (binary png data or json string or mol file)
+     * For mol file the code is actually in chemdoodle-uis-unpacked.js from chemdoodle-web-mini repository
+     */
+    private function createFromString(FileFromString $fileType, string $realName, string $content): int
+    {
+        // a png file will be received as dataurl, so we need to convert it to binary before saving it
+        if ($fileType === FileFromString::Png) {
+            $content = $this->pngDataUrlToBinary($content);
+        }
+
+        // add file extension if it wasn't provided
+        if (Tools::getExt($realName) === 'unknown') {
+            $realName .= '.' . $fileType->value;
+        }
+        // create a temporary file so we can upload it using create()
+        $tmpFilePath = FsTools::getCacheFile();
+        $tmpFilePathFs = FsTools::getFs(dirname($tmpFilePath));
+        $tmpFilePathFs->write(basename($tmpFilePath), $content);
+
+        return $this->create(new CreateUpload($realName, $tmpFilePath));
+    }
+
+    /**
+     * Transform a png data url into its binary form
+     */
+    private function pngDataUrlToBinary(string $content): string
+    {
+        $content = str_replace(array('data:image/png;base64,', ' '), array('', '+'), $content);
+        $content = base64_decode($content, true);
+        if ($content === false) {
+            throw new RuntimeException('Could not decode content!');
+        }
+        return $content;
+    }
+
+    private function canWriteOrExplode(): void
+    {
+        if ($this->uploadData['immutable'] === 1) {
+            throw new IllegalActionException('User tried to edit an immutable upload.');
+        }
+        $this->Entity->canOrExplode('write');
     }
 
     /**
@@ -283,7 +354,10 @@ class Uploads implements CrudInterface
      */
     private function nuke(): bool
     {
-        return $this->update(new UploadParams((string) self::STATE_DELETED, 'state'));
+        if ($this->uploadData['immutable'] === 0) {
+            return $this->update(new UploadParams('state', (string) State::Deleted->value));
+        }
+        return false;
     }
 
     /**
@@ -306,53 +380,5 @@ class Uploads implements CrudInterface
             throw new ImproperActionException('PHP files are forbidden!');
         }
         return $ext;
-    }
-
-    /**
-     * Make the final SQL request to store the file
-     */
-    private function dbInsert(string $realName, string $longName, string $hash, int $filesize, int $storage, ?string $comment = null): int
-    {
-        $comment ??= 'Click to add a comment';
-
-        $sql = 'INSERT INTO uploads(
-            real_name,
-            long_name,
-            comment,
-            item_id,
-            userid,
-            type,
-            hash,
-            hash_algorithm,
-            storage,
-            filesize
-        ) VALUES(
-            :real_name,
-            :long_name,
-            :comment,
-            :item_id,
-            :userid,
-            :type,
-            :hash,
-            :hash_algorithm,
-            :storage,
-            :filesize
-        )';
-
-        $req = $this->Db->prepare($sql);
-        $req->bindParam(':real_name', $realName);
-        $req->bindParam(':long_name', $longName);
-        // comment can be edited after upload
-        // not i18n friendly because it is used somewhere else (not a valid reason, but for the moment that will do)
-        $req->bindValue(':comment', $comment);
-        $req->bindParam(':item_id', $this->Entity->id, PDO::PARAM_INT);
-        $req->bindParam(':userid', $this->Entity->Users->userData['userid'], PDO::PARAM_INT);
-        $req->bindParam(':type', $this->Entity->type);
-        $req->bindParam(':hash', $hash);
-        $req->bindParam(':hash_algorithm', $this->hashAlgorithm);
-        $req->bindParam(':storage', $storage, PDO::PARAM_INT);
-        $req->bindParam(':filesize', $filesize, PDO::PARAM_INT);
-        $this->Db->execute($req);
-        return $this->Db->lastInsertId();
     }
 }

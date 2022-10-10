@@ -68,7 +68,7 @@ class TeamsHelper
      */
     public function isFirstUserInTeam(): bool
     {
-        $sql = 'SELECT COUNT(*) AS usernb FROM users
+        $sql = 'SELECT COUNT(userid) AS usernb FROM users
             CROSS JOIN users2teams ON (users2teams.users_id = users.userid)
             WHERE users2teams.teams_id = :team';
         $req = $this->Db->prepare($sql);
@@ -76,7 +76,7 @@ class TeamsHelper
         $this->Db->execute($req);
         $test = $req->fetch();
 
-        return $test['usernb'] === '0';
+        return $test['usernb'] === 0;
     }
 
     /**
@@ -89,6 +89,6 @@ class TeamsHelper
         $this->Db->execute($req);
         $test = $req->fetch();
 
-        return $test['usernb'] === '0';
+        return $test['usernb'] === 0;
     }
 }

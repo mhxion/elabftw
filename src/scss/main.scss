@@ -34,6 +34,11 @@ $text-muted: $lightgray;
 @import '../../node_modules/jquery-ui/themes/base/sortable';
 @import '../../node_modules/jquery-ui/themes/base/theme';
 
+@import './fontawesome/fontawesome';
+@import './fontawesome/solid';
+@import './fontawesome/brands';
+@import './fontawesome/regular';
+
 @import 'autocomplete';
 @import 'chemdoodle';
 @import 'footer';
@@ -641,7 +646,8 @@ tr:nth-child(odd) {
 
     h2,
     h3,
-    svg {
+    .fas,
+    .far {
         color: $lightwhite;
     }
 
@@ -794,6 +800,7 @@ the form-control fails to do that so we do the border ourselves */
 }
 
 .thumb {
+    font-size: 100px !important;
     height: 100px;
     min-height: 50px;
     min-width: 50px;
@@ -814,6 +821,10 @@ the form-control fails to do that so we do the border ourselves */
  */
 .hl-hover:hover {
     background-color: rgba(41, 174, 185, 0.5);
+}
+
+.hl-hover-gray:hover {
+    background-color: $verylightgray;
 }
 
 #commentsCreateArea {
@@ -1040,6 +1051,29 @@ the form-control fails to do that so we do the border ourselves */
     }
 }
 
+/* eye overlay for uploaded file icons */
+
+.eye-overlay {
+    display: block;
+    position: relative;
+}
+
+.eye-overlay:hover::after {
+    background-color: $maingray;
+    color: $white;
+    content: '\f06e';
+    display: block;
+    font-family: 'Font Awesome 6 Free';
+    font-size: 3em;
+    font-weight: 900;
+    left: 50%;
+    margin-left: -33px; // half width
+    position: absolute;
+    text-align: center;
+    top: 37px;
+    width: 66px;
+}
+
 /* fix for 3Dmoljs uploaded files */
 .file-uploaded {
     height: 250px;
@@ -1070,10 +1104,12 @@ the form-control fails to do that so we do the border ourselves */
     display: flex;
 }
 
-/* don't register clicks with the svg (fontawesome icons)
+/* don't register clicks with the fontawesome icons
  * this way the click event is registered by the parent and all is well
  */
-[data-fa-i2svg] {
+.far,
+.fas,
+.fab, {
     pointer-events: none;
 }
 
@@ -1089,34 +1125,19 @@ the form-control fails to do that so we do the border ourselves */
 }
 
 /* font awesome icons color */
-.svg-inline--fa {
+.far,
+.fas,
+.fab {
     color: $maingray;
 }
 
-/* custom font awesome icon size */
-.navbar-icon {
-    color: $lightgray;
-    font-size: 170%;
-
-    &.active {
-        color: $elabblue;
-    }
-}
-
-[data-icon='bell'].active {
+.fa-bell.active {
     color: $elabblue;
 }
 
 /* for icons such as pin */
 .grayed-out {
     color: $lightgraybutnottoolight;
-}
-
-/* in the fullcalendar toolbar icons are used in a button so we want them white */
-.fc-toolbar {
-    .svg-inline--fa {
-        color: #fff;
-    }
 }
 
 /* caption for tinymce */
@@ -1207,14 +1228,8 @@ input[type='color'] {
     }
 }
 
-.action-topmenu {
-    svg {
-        margin: 0 7px;
-    }
-}
-
 .fa-2x {
-    font-size: 1.3em;
+    font-size: 1.6em;
 }
 
 /* fix border radius for custom-select. brl = border radius left */
@@ -1243,6 +1258,10 @@ input[type='color'] {
 
 #backToTopButton {
     transition: all 0.5s ease;
+
+    i {
+        color: $white;
+    }
 }
 
 .switch-btn {
@@ -1289,5 +1308,22 @@ input[type='color'] {
 
     span {
         color: $lightwhite;
+    }
+}
+
+/* To generate a path, use Inkscape and draw Bezier curves and save as svg */
+.moving-bug {
+    animation: crawl 3s forwards linear;
+    offset-path: path('M 0.32956666,-0.05334692 C 12.665605,11.589579 11.928138,3.2275405 17.89012,3.9059119 22.510445,4.4316258 31.215218,-0.63454953 31.84037,3.9733749 32.752011,10.692973 42.510567,21.856688 46.363102,20.322735 52.62615,17.828995 55.24992,-0.95807772 60.359661,0.99422564 67.355357,3.6671046 74.588748,22.375307 80.733546,25.741014 99.56382,36.054972 110.72842,20.776429 103.01153,15.283795 c -6.77062,-4.819109 15.68715,-14.31937313 21.1714,-8.0753273 5.97593,6.8038503 12.04769,-6.92044453 18.96241,-6.66581506 7.76736,0.28602767 13.62434,13.59179536 19.12289,6.81266596 6.21245,-7.65928702 10.26095,14.2467484 17.98362,12.7003124 4.57794,-0.916714 28.94474,12.145381 28.94474,12.145381');
+    transform: rotate(90deg);
+}
+
+@keyframes crawl {
+    0% {
+        offset-distance: 0%;
+    }
+
+    100% {
+        offset-distance: 100%;
     }
 }

@@ -12,7 +12,6 @@ namespace Elabftw\Elabftw;
 use function bin2hex;
 use Elabftw\Exceptions\ImproperActionException;
 use Elabftw\Exceptions\InvalidSchemaException;
-use Elabftw\Models\Config;
 use PDO;
 use function random_bytes;
 use function sha1;
@@ -29,7 +28,7 @@ use function sha1;
 class Update
 {
     /** @var int REQUIRED_SCHEMA the current version of the database structure */
-    private const REQUIRED_SCHEMA = 91;
+    private const REQUIRED_SCHEMA = 100;
 
     private Db $Db;
 
@@ -119,16 +118,6 @@ class Update
      */
     private function fixExperimentsRevisions(): void
     {
-        // delete all experiments_revisions where userid doesn't exist anymore
-        // we do this to prevent having an integrity constraint violation when adding the constraint later
-        $sql = 'DELETE FROM experiments_revisions WHERE userid NOT IN (SELECT users.userid FROM users)';
-        $req = $this->Db->prepare($sql);
-        $req->execute();
-        // do the same for experiments
-        $sql = 'DELETE FROM experiments_revisions WHERE item_id NOT IN (SELECT experiments.id FROM experiments)';
-        $req = $this->Db->prepare($sql);
-        $req->execute();
-
         $sql = 'SELECT * FROM information_schema.REFERENTIAL_CONSTRAINTS WHERE CONSTRAINT_NAME = :name1 OR CONSTRAINT_NAME= :name2';
         $req = $this->Db->prepare($sql);
         $req->bindValue(':name1', 'fk_experiments_revisions_experiments_id');

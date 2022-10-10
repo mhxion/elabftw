@@ -13,8 +13,11 @@ namespace Elabftw\Services;
 use function bin2hex;
 use Elabftw\Elabftw\AuthResponse;
 use Elabftw\Elabftw\Db;
+use Elabftw\Exceptions\ImproperActionException;
 use Elabftw\Models\Users;
 use function hash;
+use Monolog\Handler\ErrorLogHandler;
+use Monolog\Logger;
 use PDO;
 use function random_bytes;
 use Symfony\Component\HttpFoundation\Session\SessionInterface;
@@ -37,6 +40,7 @@ class LoginHelper
      */
     public function login(bool $setCookie): void
     {
+        $this->checkAccountValidity();
         $this->populateSession();
         if ($setCookie) {
             $this->setToken();
@@ -47,6 +51,9 @@ class LoginHelper
         if ($this->Session->has('auth_service')) {
             $this->updateAuthService();
         }
+        $Log = new Logger('elabftw');
+        $Log->pushHandler(new ErrorLogHandler());
+        $Log->info('User is logging in', array('userid' => $this->AuthResponse->userid));
     }
 
     /**
@@ -70,6 +77,24 @@ class LoginHelper
         $req = $this->Db->prepare($sql);
         $req->bindParam(':userid', $this->AuthResponse->userid, PDO::PARAM_INT);
         $this->Db->execute($req);
+    }
+
+    /**
+     * Verify account validity date
+     */
+    private function checkAccountValidity(): void
+    {
+        if ($this->AuthResponse->isAnonymous) {
+            return;
+        }
+        $sql = 'SELECT IFNULL(valid_until, "3000-01-01") > NOW() FROM users WHERE userid = :userid';
+        $req = $this->Db->prepare($sql);
+        $req->bindParam(':userid', $this->AuthResponse->userid, PDO::PARAM_INT);
+        $this->Db->execute($req);
+        $res = (bool) $req->fetchColumn();
+        if ($res === false) {
+            throw new ImproperActionException(_('Your account has expired. Contact your team Admin to extend its validity.'));
+        }
     }
 
     private function setDeviceToken(): void

@@ -3,7 +3,7 @@
 {% block body %}
 {# tinymce or markdown? #}
 {% set editor = 'tiny' %}
-{% if Entity.Users.userData.use_markdown or App.Request.query.get('editor') == 'md' %}
+{% if Entity.Users.userData.use_markdown or App.Request.query.get('editor') == 'md' or Entity.entityData.content_type == '2' %}
   {% set editor = 'md' %}
 {% endif %}
 {% if App.Request.query.get('editor') == 'tiny' %}
@@ -40,7 +40,7 @@
         <div class='form-group'>
         <i class='fas fa-fw fa-eye' title='Visibility'></i>
         <label for='canread_select'>{{ 'Visibility'|trans }}</label>
-        <select id='canread_select' class='permissionSelect form-control' data-rw='read'>
+        <select id='canread_select' class='permissionSelect form-control' data-rw='canread'>
           {% for key, value in visibilityArr %}
             <option value='{{ key }}'
             {{ Entity.entityData.canread == key ? ' selected' }}
@@ -50,7 +50,7 @@
         <!-- CAN WRITE -->
         <i class='fas fa-fw fa-pencil-alt' title='Can write'></i>
         <label for='canwrite_select'>{{ 'Can write'|trans }}</label>
-        <select id='canwrite_select' class='permissionSelect form-control' data-rw='write'>
+        <select id='canwrite_select' class='permissionSelect form-control' data-rw='canwrite'>
           {% for key, value in visibilityArr %}
             <option value='{{ key }}'
             {{ Entity.entityData.canwrite == key ? ' selected' }}
@@ -95,7 +95,7 @@
 </div>
 
 <!-- show message if it was recently modified -->
-{% set lastchangeDiff = 'now'|date('U') - Entity.entityData.lastchange|date('U') %}
+{% set lastchangeDiff = 'now'|date('U') - Entity.entityData.modified_at|date('U') %}
 {% if (lastchangeDiff < 600) and not Entity.entityData.lastchangeby is null and Entity.entityData.lastchangeby != Entity.Users.userData.userid %}
   {{ 'Warning: this entry was modified %s seconds ago by %s.'|trans|format(lastchangeDiff, lastModifierFullname)|msg('warning', false) }}
 {% endif %}
@@ -120,9 +120,15 @@
       {% endif %}
 
       <div class='dropdown-divider'></div>
-      <a class='dropdown-item hover-danger {{ not deletableXp and (Entity.type == 'experiments') ? 'disabled' }}' href='#' data-action='destroy'><i class='fas fa-trash-alt fa-fw' title='{{ 'Delete'|trans }}'></i> {{ 'Delete'|trans }}</a>
+      <a class='dropdown-item hover-danger {{ Entity.entityData.timestamped or (not deletableXp and (Entity.type == 'experiments')) ? 'disabled' }}' href='#' data-action='destroy'><i class='fas fa-trash-alt fa-fw' title='{{ 'Delete'|trans }}'></i> {{ 'Delete'|trans }}</a>
     </div>
   </div>
+  <p id='toggle-pin-icon-div' class='float-right mr-3 d-inline'>
+    <a class='elab-tooltip ml-2' data-action='toggle-pin' href='#'>
+      <span>{{ 'Toggle pin'|trans }}</span>
+      <i title='{{ 'Toggle pin'|trans }}' id='toggle-pin-icon' class='fas fa-thumbtack {{ Entity.Pins.isPinned ? '' : 'grayed-out' }} fa-2x'></i>
+    </a>
+  </p>
 
   <!-- DATE -->
   <div class='row mb-2 form-inline'>
@@ -179,14 +185,14 @@
             {%- endfor -%}
           {% endif %}
         </div>
-        <input type='text' id='createTagInput' data-autocomplete='tags' class='createTagInput form-control' placeholder='{{ 'Add a tag'|trans }}' />
+        <input type='text' id='createTagInput' data-teamid='{{ App.Users.userData.team }}' data-autocomplete='tags' class='createTagInput form-control' placeholder='{{ 'Add a tag'|trans }}' />
       </div>
     </div>
   </div>
 
   <!-- BODY -->
   {% if editor == 'md' %}
-  <textarea aria-label='{{ 'Main content'|trans }}' id='body_area' class='markdown-textarea' data-language='{{ lang }}' name='body'>{{ Entity.entityData.body }}</textarea>
+  <textarea aria-label='{{ 'Main content'|trans }}' id='body_area' class='markdown-textarea' data-language='{{ App.getJsLang }}' name='body'>{{ Entity.entityData.body }}</textarea>
   {% else %}
   <div><!-- << this div is added around the textarea to fix an issue on mobile editor. See #3107 -->
     <textarea aria-label='{{ 'Main content'|trans }}' id='body_area' class='mceditable invisible' name='body' rows='15' cols='80'>{{ Entity.entityData.body }}</textarea>
@@ -205,8 +211,8 @@
 
 <!-- UPLOAD FORM -->
 <section class='box'>
-  <i class='fas fa-fw fa-paperclip mr-1 align-baseline'></i><h3 class='d-inline'>{{ 'Attach a file'|trans }}</h3>
-  <form action='app/controllers/EntityAjaxController.php' class='dropzone' id='elabftw-dropzone'></form>
+  <h3 class='d-inline'><i class='fas fa-fw fa-paperclip'></i> {{ 'Attach a file'|trans }}</h3>
+  <form action='api/v2/{{ Entity.page }}/{{ Entity.id }}/uploads' class='dropzone mt-2' id='elabftw-dropzone'></form>
 </section>
 
 {% include 'uploads.html' %}
@@ -248,14 +254,16 @@
 </section>
 
 <!-- CHEM EDITOR -->
-{% if Entity.Users.userData.chem_editor %}
-  <div class='box chemdoodle'>
-    <h3 data-action='toggle-next' data-icon='chemDivIcon' class='d-inline'><i id='chemDivIcon' class='fas fa-chevron-circle-down'></i> <i class='fas fa-fw fa-dna'></i> {{ 'Molecule drawer'|trans }}</h3>
-    <div id='chemDiv' hidden data-save-hidden='chemDiv' class='mt-2 text-center'>
-      <script src='assets/chemdoodle-canvas.bundle.js?v={{ v }}'></script>
+<div class='box chemdoodle'>
+  <h3 data-action='toggle-next' data-icon='chemDivIcon' class='d-inline'><i id='chemDivIcon' class='fas fa-chevron-circle-down'></i> <i class='fas fa-fw fa-dna'></i> {{ 'Molecule drawer'|trans }}</h3>
+  <div id='chemDiv' hidden data-save-hidden='chemDiv' class='mt-2 text-center'>
+    <div class='text-center mb-2'>
+      <button class='btn btn-primary' data-filetype='chemjson' data-action='save-chem-as-file'>{{ 'Save as JSON'|trans }}</button>
+      <button class='btn btn-primary' data-filetype='png' data-action='save-chem-as-file'>{{ 'Save as image'|trans }}</button>
     </div>
+    <canvas id='sketcher'></canvas>
   </div>
-{% endif %}
+</div>
 
 <div id='info'
     data-page='edit'

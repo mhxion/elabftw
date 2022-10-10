@@ -15,6 +15,7 @@ use Elabftw\Elabftw\FsTools;
 use Elabftw\Models\Config;
 use jblond\TwigTrans\Translation;
 use Twig\Environment;
+use Twig\Extension\DebugExtension;
 use Twig\Extra\Intl\IntlExtension;
 use Twig\Loader\FilesystemLoader;
 use Twig\TwigFilter;
@@ -50,7 +51,6 @@ trait TwigTrait
         $bytesFilter = new TwigFilter('formatBytes', '\Elabftw\Elabftw\Tools::formatBytes', $filterOptions);
         $extFilter = new TwigFilter('getExt', '\Elabftw\Elabftw\Tools::getExt', $filterOptions);
         $qFilter = new TwigFilter('qFilter', '\Elabftw\Elabftw\Tools::qFilter', $filterOptions);
-        $langFilter = new TwigFilter('jslang', '\Elabftw\Elabftw\Tools::getCalendarLang', $filterOptions);
         $metadataFilter = new TwigFilter('formatMetadata', '\Elabftw\Elabftw\Tools::formatMetadata', $filterOptions);
         $csrfFilter = new TwigFilter('csrf', '\Elabftw\Services\Transform::csrf', $filterOptions);
         $notifWebFilter = new TwigFilter('notifWeb', '\Elabftw\Services\Transform::notif', $filterOptions);
@@ -78,6 +78,10 @@ trait TwigTrait
         $TwigEnvironment->addExtension(new Translation());
         // intl extension
         $TwigEnvironment->addExtension(new IntlExtension());
+        // enable twig dump function in debug mode {{ dump(variable) }}
+        if ($config->configArr['debug']) {
+            $TwigEnvironment->addExtension(new DebugExtension());
+        }
 
         $TwigEnvironment->addFilter($msgFilter);
         $TwigEnvironment->addFilter($mdFilter);
@@ -85,7 +89,6 @@ trait TwigTrait
         $TwigEnvironment->addFilter($bytesFilter);
         $TwigEnvironment->addFilter($extFilter);
         $TwigEnvironment->addFilter($qFilter);
-        $TwigEnvironment->addFilter($langFilter);
         $TwigEnvironment->addFilter($metadataFilter);
         $TwigEnvironment->addFilter($csrfFilter);
         $TwigEnvironment->addFilter($notifWebFilter);

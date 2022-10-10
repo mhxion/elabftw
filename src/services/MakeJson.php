@@ -9,9 +9,8 @@
 
 namespace Elabftw\Services;
 
-use Elabftw\Elabftw\ContentParams;
 use Elabftw\Exceptions\IllegalActionException;
-use Elabftw\Interfaces\FileMakerInterface;
+use Elabftw\Interfaces\StringMakerInterface;
 use Elabftw\Models\AbstractEntity;
 use function json_decode;
 use function json_encode;
@@ -19,11 +18,12 @@ use function json_encode;
 /**
  * Make a JSON export from one or several entities
  */
-class MakeJson extends AbstractMake implements FileMakerInterface
+class MakeJson extends AbstractMake implements StringMakerInterface
 {
     public function __construct(AbstractEntity $entity, private array $idArr)
     {
         parent::__construct($entity);
+        $this->contentType = 'application/json';
     }
 
     /**
@@ -32,11 +32,6 @@ class MakeJson extends AbstractMake implements FileMakerInterface
     public function getFileName(): string
     {
         return 'export-elabftw.json';
-    }
-
-    public function getContentType(): string
-    {
-        return 'application/json';
     }
 
     /**
@@ -49,7 +44,7 @@ class MakeJson extends AbstractMake implements FileMakerInterface
         foreach ($this->idArr as $id) {
             $this->Entity->setId((int) $id);
             try {
-                $all = $this->Entity->read(new ContentParams());
+                $all = $this->Entity->readOne();
             } catch (IllegalActionException $e) {
                 continue;
             }
@@ -64,6 +59,7 @@ class MakeJson extends AbstractMake implements FileMakerInterface
         if ($json === false) {
             return '{"error": "Something went wrong!"}';
         }
+        $this->contentSize = mb_strlen($json);
         return $json;
     }
 }

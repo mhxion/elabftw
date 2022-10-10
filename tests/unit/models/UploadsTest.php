@@ -9,11 +9,15 @@
 
 namespace Elabftw\Models;
 
-use Elabftw\Elabftw\ContentParams;
+use Elabftw\Elabftw\CreateImmutableUpload;
 use Elabftw\Elabftw\CreateUpload;
-use Elabftw\Elabftw\UploadParams;
-use Elabftw\Services\StorageFactory;
-use Symfony\Component\HttpFoundation\File\UploadedFile;
+use Elabftw\Enums\Action;
+use Elabftw\Enums\FileFromString;
+use Elabftw\Enums\State;
+use Elabftw\Exceptions\IllegalActionException;
+use Elabftw\Exceptions\ImproperActionException;
+use Elabftw\Factories\StorageFactory;
+use RuntimeException;
 
 class UploadsTest extends \PHPUnit\Framework\TestCase
 {
@@ -21,7 +25,7 @@ class UploadsTest extends \PHPUnit\Framework\TestCase
 
     protected function setUp(): void
     {
-        $this->Entity = new Items(new Users(1, 1), 10);
+        $this->Entity = new Items(new Users(1, 1), 11);
     }
 
     public function testCreate(): void
@@ -65,13 +69,48 @@ class UploadsTest extends \PHPUnit\Framework\TestCase
         $Uploads->create($params);
     }
 
+    public function testCreatePngFromString(): void
+    {
+        $dataUrl = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAYAAABytg0kAAABhWlDQ1BJQ0MgcHJvZmlsZQAAKJF9kT1Iw0AcxV9TpSIVByuIKGSoThZERcRJq1CECqFWaNXB5NIPoUlDkuLiKLgWHPxYrDq4OOvq4CoIgh8gjk5Oii5S4v+SQosYD4778e7e4+4dINRKTLPaRgFNt81UIi5msiti6BUhDKIX0wjJzDJmJSkJ3/F1jwBf72I8y//cn6NLzVkMCIjEM8wwbeJ14slN2+C8TxxhRVklPiceMemCxI9cVzx+41xwWeCZETOdmiOOEIuFFlZamBVNjXiCOKpqOuULGY9VzluctVKFNe7JXxjO6ctLXKc5gAQWsAgJIhRUsIESbMRo1UmxkKL9uI+/3/VL5FLItQFGjnmUoUF2/eB/8LtbKz8+5iWF40D7i+N8DAGhXaBedZzvY8epnwDBZ+BKb/rLNWDqk/RqU4seAd3bwMV1U1P2gMsdoO/JkE3ZlYI0hXweeD+jb8oCPbdA56rXW2Mfpw9AmrpK3gAHh8BwgbLXfN7d0drbv2ca/f0AoG1yuTjmrdUAAAAGYktHRAD/AP8A/6C9p5MAAAAJcEhZcwAALiMAAC4jAXilP3YAAAAHdElNRQfmCAEBGRl6rBV0AAAAD3RFWHRDb21tZW50AGVMYWJGVFfEIDydAAAAG0lEQVQI12NkYGD4X1tby8Cwf//+/8+ePfsPAD1lCWVCgcPRAAAAAElFTkSuQmCC';
+        $id = $this->Entity->Uploads->postAction(Action::CreateFromString, array(
+            'file_type' => FileFromString::Png->value,
+            'real_name' => 'some.png',
+            'content' => $dataUrl,
+        ));
+        $this->assertIsInt($id);
+    }
+
+    public function testCreatePngFromInvalidString(): void
+    {
+        $dataUrl = 'data:';
+        $this->expectException(RuntimeException::class);
+        $this->Entity->Uploads->postAction(Action::CreateFromString, array(
+            'file_type' => FileFromString::Png->value,
+            'real_name' => 'invalid.png',
+            'content' => $dataUrl,
+        ));
+    }
+
+    public function testUploadingPhpFile(): void
+    {
+        $this->expectException(ImproperActionException::class);
+        $this->Entity->Uploads->create(new CreateUpload('some.php', __FILE__));
+    }
+
+    public function testEditAnImmutableFile(): void
+    {
+        $id = $this->Entity->Uploads->create(new CreateImmutableUpload('some-immutable.zip', dirname(__DIR__, 2) . '/_data/importable.zip'));
+        $this->Entity->Uploads->setId($id);
+        $this->expectException(IllegalActionException::class);
+        $this->Entity->Uploads->patch(Action::Update, array('real_name' => 'new'));
+    }
+
     public function testGetStorageFromLongname(): void
     {
         $Uploads = new Uploads($this->Entity);
         $id = $Uploads->create(new CreateUpload('example.png', dirname(__DIR__, 2) . '/_data/example.png'));
         $Uploads->setId($id);
-        $upArr = $Uploads->read(new ContentParams());
-        $this->assertEquals($upArr['storage'], $Uploads->getStorageFromLongname($upArr['long_name']));
+        $this->assertEquals($Uploads->uploadData['storage'], $Uploads->getStorageFromLongname($Uploads->uploadData['long_name']));
     }
 
     public function testGetIdFromLongname(): void
@@ -79,29 +118,33 @@ class UploadsTest extends \PHPUnit\Framework\TestCase
         $Uploads = new Uploads($this->Entity);
         $id = $Uploads->create(new CreateUpload('example.png', dirname(__DIR__, 2) . '/_data/example.png'));
         $Uploads->setId($id);
-        $upArr = $Uploads->read(new ContentParams());
-        $this->assertEquals($upArr['id'], $Uploads->getIdFromLongname($upArr['long_name']));
+        $this->assertEquals($Uploads->uploadData['id'], $Uploads->getIdFromLongname($Uploads->uploadData['long_name']));
     }
 
     public function testReplace(): void
     {
         $Uploads = new Uploads($this->Entity);
-        $id = $Uploads->create(new CreateUpload('example.png', dirname(__DIR__, 2) . '/_data/example.png'));
+        $id = $Uploads->create(new CreateUpload('example.png', dirname(__DIR__, 2) . '/_data/example.png', 'some super duper comment'));
         $Uploads->setId($id);
-        $upArrBefore = $Uploads->read(new ContentParams());
+        $upArrBefore = $Uploads->uploadData;
 
-        $upArrNew = $Uploads->replace(new UploadParams('', 'file', new UploadedFile(dirname(__DIR__, 2) . '/_data/example.png', 'example.png')));
-        $this->assertIsArray($upArrNew);
-        $this->assertEquals($upArrBefore['comment'], $upArrNew['comment']);
-
+        $id = $Uploads->postAction(Action::Create, array('real_name' => 'example.png', 'filePath' => dirname(__DIR__, 2) . '/_data/example.png'));
+        $this->assertIsInt($id);
+        // make sure the old one is archived
+        $this->assertEquals($Uploads->readOne()['state'], State::Archived->value);
         $Uploads->setId($id);
-        // need to use readAll() because read() only gets entries with state = STATE_NORMAL
-        $upArrAfter = $Uploads->readAll();
-        $upArrAfter = array_values(array_filter($upArrAfter, function ($u) use ($id) {
-            return ((int) $u['id']) === $id;
-        }));
+        // make sure the comment is the same
+        $this->assertEquals($upArrBefore['comment'], $Uploads->uploadData['comment']);
+    }
 
-        // access the updated entry in the nested array
-        $this->assertEquals((int) $upArrAfter[0]['state'], $Uploads::STATE_ARCHIVED);
+    public function testInvalidId(): void
+    {
+        $this->expectException(IllegalActionException::class);
+        $this->Entity->Uploads->setId(0);
+    }
+
+    public function testDestroyAll(): void
+    {
+        $this->assertTrue($this->Entity->Uploads->destroyAll());
     }
 }

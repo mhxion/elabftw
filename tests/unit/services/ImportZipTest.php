@@ -12,7 +12,6 @@ namespace Elabftw\Services;
 use Elabftw\Exceptions\ImproperActionException;
 use Elabftw\Models\Users;
 use League\Flysystem\Filesystem;
-use League\Flysystem\FilesystemException;
 use League\Flysystem\FilesystemOperator;
 use League\Flysystem\Local\LocalFilesystemAdapter;
 use Symfony\Component\HttpFoundation\File\UploadedFile;
@@ -40,9 +39,9 @@ class ImportZipTest extends \PHPUnit\Framework\TestCase
         );
 
         $this->expectException(ImproperActionException::class);
-        $Import = new ImportZip(
+        new ImportZip(
             new Users(1, 1),
-            1,
+            'items:1',
             'team',
             'team',
             $uploadedFile,
@@ -60,9 +59,9 @@ class ImportZipTest extends \PHPUnit\Framework\TestCase
             true,
         );
         $this->expectException(ImproperActionException::class);
-        $Import = new ImportZip(
+        new ImportZip(
             new Users(1, 1),
-            1,
+            'items:1',
             'team',
             'team',
             $uploadedFile,
@@ -82,14 +81,14 @@ class ImportZipTest extends \PHPUnit\Framework\TestCase
 
         $Import = new ImportZip(
             new Users(1, 1),
-            1,
+            'experiments:1',
             'team',
             'team',
             $uploadedFile,
             $this->fs,
         );
         $Import->import();
-        $this->assertEquals(1, $Import->inserted);
+        $this->assertEquals(1, $Import->getInserted());
     }
 
     public function testImportExperimentsMulti(): void
@@ -104,14 +103,14 @@ class ImportZipTest extends \PHPUnit\Framework\TestCase
 
         $Import = new ImportZip(
             new Users(1, 1),
-            1,
+            'experiments:1',
             'team',
             'team',
             $uploadedFile,
             $this->fs,
         );
         $Import->import();
-        $this->assertEquals(2, $Import->inserted);
+        $this->assertEquals(2, $Import->getInserted());
     }
 
     public function testImportItems(): void
@@ -126,14 +125,14 @@ class ImportZipTest extends \PHPUnit\Framework\TestCase
 
         $Import = new ImportZip(
             new Users(1, 1),
-            1,
+            'items:1',
             'team',
             'team',
             $uploadedFile,
             $this->fs,
         );
         $Import->import();
-        $this->assertEquals(1, $Import->inserted);
+        $this->assertEquals(1, $Import->getInserted());
     }
 
     public function testImportNoJson(): void
@@ -148,13 +147,13 @@ class ImportZipTest extends \PHPUnit\Framework\TestCase
 
         $Import = new ImportZip(
             new Users(1, 1),
-            1,
+            'items:1',
             'team',
             'team',
             $uploadedFile,
             $this->fs,
         );
-        $this->expectException(FilesystemException::class);
+        $this->expectException(ImproperActionException::class);
         $Import->import();
     }
 }

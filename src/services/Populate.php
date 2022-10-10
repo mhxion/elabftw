@@ -9,9 +9,9 @@
 
 namespace Elabftw\Services;
 
-use Elabftw\Elabftw\EntityParams;
-use Elabftw\Elabftw\StepParams;
-use Elabftw\Elabftw\TagParams;
+use Elabftw\Elabftw\UserParams;
+use Elabftw\Enums\Action;
+use Elabftw\Enums\FileFromString;
 use Elabftw\Models\ApiKeys;
 use Elabftw\Models\Experiments;
 use Elabftw\Models\Items;
@@ -46,61 +46,61 @@ class Populate
     /**
      * Populate the db with fake experiments or items
      */
-    public function generate(Experiments|Items $Entity): void
+    public function generate(Experiments | Items $Entity): void
     {
         if ($Entity instanceof Experiments) {
-            $Category = new Status($Entity->Users->team);
+            $Category = new Status(new Teams($Entity->Users, $Entity->Users->team));
             $tpl = 0;
         } else {
             $Category = new ItemsTypes($Entity->Users);
             $tpl = (int) $Category->readAll()[0]['category_id'];
         }
-        $categories = $Category->readAll();
+        $categoryArr = $Category->readAll();
 
 
         printf("Generating %s \n", $Entity->type);
         for ($i = 0; $i <= $this->iter; $i++) {
-            $id = $Entity->create(new EntityParams((string) $tpl));
+            $id = $Entity->create($tpl);
             $Entity->setId($id);
             // variable tag number
             $Tags = new Tags($Entity);
             $tagNb = $this->faker->numberBetween(0, 5);
             for ($j = 0; $j <= $tagNb; $j++) {
-                $Tags->create(new TagParams($this->faker->word() . $this->faker->word()));
+                $Tags->postAction(Action::Create, array('tag' => $this->faker->word() . $this->faker->word()));
             }
-            $params = new EntityParams($this->faker->sentence(), 'title');
-            $Entity->update($params);
             // random date in the past 5 years
-            $params = new EntityParams($this->faker->dateTimeBetween('-5 years')->format('Ymd'), 'date');
-            $Entity->update($params);
-            $params = new EntityParams($this->faker->realText(1000), 'body');
-            $Entity->update($params);
+            $date = $this->faker->dateTimeBetween('-5 years')->format('Ymd');
+            $Entity->patch(Action::Update, array('title' => $this->faker->sentence(), 'date' => $date, 'body' => $this->faker->realText(1000)));
 
             // lock 10% of experiments (but not the first one because it is used in tests)
             if ($this->faker->randomDigit() > 8 && $i > 1) {
                 $Entity->toggleLock();
             }
 
-            // change the visibility
-            if ($this->faker->randomDigit() > 8) {
-                $Entity->updatePermissions('read', $this->faker->randomElement(array('organization', 'public', 'user')));
-                $Entity->updatePermissions('write', $this->faker->randomElement(array('organization', 'public', 'user')));
+            // change the visibility, but not the first ones as they are often used in tests and this could cause permissions issues
+            if ($this->faker->randomDigit() > 8 && $i > 10) {
+                $Entity->patch(Action::Update, array('canread' => $this->faker->randomElement(array('organization', 'public', 'user'))));
+                $Entity->patch(Action::Update, array('canwrite' => $this->faker->randomElement(array('organization', 'public', 'user'))));
             }
 
             // change the category (status/item type)
-            $category = $this->faker->randomElement($categories);
-            $Entity->updateCategory((int) $category['category_id']);
+            $category = $this->faker->randomElement($categoryArr);
+            $Entity->patch(Action::Update, array('category' => (string) $category['category_id']));
 
             // maybe upload a file but not on the first one
             if ($this->faker->randomDigit() > 7 && $id !== 1) {
-                $Entity->Uploads->createFromString('json', $this->faker->word() . $this->faker->word(), '{ "some": "content" }');
+                $Entity->Uploads->postAction(Action::CreateFromString, array(
+                    'file_type' => FileFromString::Json->value,
+                    'real_name' => $this->faker->word() . $this->faker->word(),
+                    'content' => '{ "some": "content" }',
+                ));
             }
 
             // maybe add a few steps
             if ($this->faker->randomDigit() > 8) {
                 // put two words so it's long enough
-                $Entity->Steps->create(new StepParams($this->faker->word() . $this->faker->word()));
-                $Entity->Steps->create(new StepParams($this->faker->word() . $this->faker->word()));
+                $Entity->Steps->postAction(Action::Create, array('body' => $this->faker->word() . $this->faker->word()));
+                $Entity->Steps->postAction(Action::Create, array('body' => $this->faker->word() . $this->faker->word()));
             }
         }
         printf("Generated %d %s \n", $this->iter, $Entity->type);
@@ -111,10 +111,10 @@ class Populate
     {
         $firstname = $user['firstname'] ?? $this->faker->firstName();
         $lastname = $user['lastname'] ?? $this->faker->lastName();
-        $password = $user['password'] ?? self::DEFAULT_PASSWORD;
+        $passwordHash = (new UserParams('password', $user['password'] ?? self::DEFAULT_PASSWORD))->getContent();
         $email = $user['email'] ?? $this->faker->safeEmail();
 
-        $userid = $Teams->Users->create($email, array($user['team']), $firstname, $lastname, $password, null, true, false);
+        $userid = $Teams->Users->createOne($email, array($user['team']), $firstname, $lastname, $passwordHash, null, true, false);
         $team = $Teams->getTeamsFromIdOrNameOrOrgidArray(array($user['team']));
         $Users = new Users($userid, (int) $team[0]['id']);
 
@@ -138,11 +138,7 @@ class Populate
         if ($user['create_templates'] ?? false) {
             $Templates = new Templates($Users);
             for ($i = 0; $i < $this->iter; $i++) {
-                $Templates->create(new EntityParams(
-                    $this->faker->sentence(),
-                    '',
-                    array('body' => $this->faker->realText(1000)),
-                ));
+                $Templates->create($this->faker->sentence());
             }
         }
     }

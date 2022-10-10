@@ -9,6 +9,7 @@
 
 namespace Elabftw\Elabftw;
 
+use Elabftw\Enums\Language;
 use Elabftw\Exceptions\DatabaseErrorException;
 use Elabftw\Exceptions\FilesystemErrorException;
 use Elabftw\Exceptions\IllegalActionException;
@@ -27,37 +28,29 @@ use Symfony\Component\HttpFoundation\Response;
 require_once 'app/init.inc.php';
 $App->pageTitle = _('User Control Panel');
 
+/** @psalm-suppress UncaughtThrowInGlobalScope */
 $Response = new Response();
-$Response->prepare($Request);
+$Response->prepare($App->Request);
 
 try {
     $ApiKeys = new ApiKeys($App->Users);
-    $apiKeysArr = $ApiKeys->read(new ContentParams());
+    $apiKeysArr = $ApiKeys->readAll();
 
     $TeamGroups = new TeamGroups($App->Users);
-    $teamGroupsArr = $TeamGroups->read(new ContentParams());
+    $teamGroupsArr = $TeamGroups->readAll();
 
     $Templates = new Templates($App->Users);
     $templatesArr = $Templates->getWriteableTemplatesList();
-    $templateData = array();
-    $stepsArr = array();
-    $linksArr = array();
-
-    if ($Request->query->has('templateid')) {
-        $Templates->setId((int) $Request->query->get('templateid'));
-        $templateData = $Templates->read(new ContentParams());
-        $permissions = $Templates->getPermissions($templateData);
-        if ($permissions['write'] === false) {
-            throw new IllegalActionException('User tried to access a template without write permissions');
-        }
+    $entityData = array();
+    if ($App->Request->query->has('templateid')) {
+        $Templates->setId((int) $App->Request->query->get('templateid'));
+        $entityData = $Templates->readOne();
         $Revisions = new Revisions(
             $Templates,
             (int) $App->Config->configArr['max_revisions'],
             (int) $App->Config->configArr['min_delta_revisions'],
             (int) $App->Config->configArr['min_days_revisions'],
         );
-        $stepsArr = $Templates->Steps->read(new ContentParams());
-        $linksArr = $Templates->Links->read(new ContentParams());
     }
 
     // TEAM GROUPS
@@ -102,13 +95,11 @@ try {
     $renderArr = array(
         'Entity' => $Templates,
         'apiKeysArr' => $apiKeysArr,
-        'langsArr' => Tools::getLangsArr(),
-        'stepsArr' => $stepsArr,
-        'linksArr' => $linksArr,
+        'langsArr' => Language::getAllHuman(),
+        'entityData' => $entityData,
         'itemsCategoryArr' => $itemsCategoryArr,
         'notificationsSettings' => $notificationsSettings,
         'teamGroupsArr' => $teamGroupsArr,
-        'templateData' => $templateData,
         'templatesArr' => $templatesArr,
         'visibilityArr' => $visibilityArr,
         'revNum' => isset($Revisions) ? $Revisions->readCount() : 0,

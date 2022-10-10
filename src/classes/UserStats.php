@@ -10,6 +10,7 @@
 namespace Elabftw\Elabftw;
 
 use Elabftw\Models\Status;
+use Elabftw\Models\Teams;
 use Elabftw\Models\Users;
 use PDO;
 
@@ -42,11 +43,11 @@ class UserStats
         }
 
         // get all status name and id
-        $Status = new Status($this->Users->team);
-        $statusAll = $Status->readAll();
+        $Status = new Status(new Teams($this->Users, $this->Users->team));
+        $statusArr = $Status->readAll();
 
         // populate arrays
-        foreach ($statusAll as $status) {
+        foreach ($statusArr as $status) {
             $statusArr = array();
             $statusArr['name'] = $status['category'];
             $statusArr['id'] = $status['category_id'];

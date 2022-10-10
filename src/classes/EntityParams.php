@@ -9,71 +9,39 @@
 
 namespace Elabftw\Elabftw;
 
-use Elabftw\Interfaces\EntityParamsInterface;
+use Elabftw\Enums\State;
+use Elabftw\Exceptions\ImproperActionException;
+use Elabftw\Interfaces\ContentParamsInterface;
+use Elabftw\Services\Check;
 use Elabftw\Services\Filter;
-use function in_array;
-use const JSON_HEX_APOS;
-use const JSON_THROW_ON_ERROR;
 
-class EntityParams extends ContentParams implements EntityParamsInterface
+class EntityParams extends ContentParams implements ContentParamsInterface
 {
-    public function __construct(string $content, string $target = '', ?array $extra = null)
+    public function getContent(): mixed
     {
-        parent::__construct($content, $target, $extra);
+        return match ($this->target) {
+            'title' => Filter::title($this->content),
+            // MySQL with throw an error if this param is incorrect
+            'date', 'metadata' => $this->getUnfilteredContent(),
+            'body', 'bodyappend' => $this->getBody(),
+            'canread', 'canwrite' => Check::Visibility($this->content),
+            'color' => Check::color($this->content),
+            'category', 'bookable', 'content_type', 'rating', 'userid', 'state' => $this->getInt(),
+            default => throw new ImproperActionException('Invalid update target.'),
+        };
     }
 
-    public function getTitle(): string
+    public function getColumn(): string
     {
-        return Filter::title($this->content);
-    }
-
-    public function getTags(): array
-    {
-        return $this->extra['tags'] ?? array();
-    }
-
-    public function getDate(): string
-    {
-        return $this->content;
-    }
-
-    public function getBody(): string
-    {
-        return Filter::body($this->content);
-    }
-
-    public function getExtraBody(): string
-    {
-        return Filter::body($this->extra['body'] ?? '');
-    }
-
-    public function getRating(): int
-    {
-        return (int) $this->content;
-    }
-
-    public function getMetadata(): string
-    {
-        return $this->content;
-    }
-
-    public function getField(): string
-    {
-        return json_encode($this->extra['jsonField'] ?? '', JSON_HEX_APOS | JSON_THROW_ON_ERROR);
-    }
-
-    public function getUserId(): int
-    {
-        return (int) $this->content;
+        if ($this->target === 'bodyappend') {
+            return 'body';
+        }
+        return parent::getColumn();
     }
 
     public function getState(): int
     {
-        $state = (int) $this->content;
-        // TODO in php 8.1, we will use an enum for this
-        if (!in_array($state, array(1, 2, 3), true)) {
-            return 1;
-        }
-        return $state;
+        $state = State::tryFrom((int) $this->content) ?? State::Normal;
+        return $state->value;
     }
 }

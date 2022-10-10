@@ -42,8 +42,10 @@ class ExistingUser extends Users
         bool $alertAdmin = true,
     ): Users {
         $Users = new self();
-        $userid = $Users->create($email, $teams, $firstname, $lastname, '', $usergroup, $forceValidation, $alertAdmin);
-        $Users->populate($userid);
-        return $Users;
+        $userid = $Users->createOne($email, $teams, $firstname, $lastname, '', $usergroup, $forceValidation, $alertAdmin);
+        $fresh = new self($userid);
+        // we need to report the needValidation flag into the new object
+        $fresh->needValidation = $Users->needValidation;
+        return $fresh;
     }
 }

@@ -9,18 +9,19 @@
 
 namespace Elabftw\Models;
 
+use Elabftw\Elabftw\CommentParam;
 use Elabftw\Elabftw\CreateNotificationParams;
 use Elabftw\Elabftw\Db;
-use Elabftw\Interfaces\ContentParamsInterface;
-use Elabftw\Interfaces\CrudInterface;
+use Elabftw\Enums\Action;
+use Elabftw\Exceptions\ImproperActionException;
+use Elabftw\Interfaces\RestInterface;
 use Elabftw\Traits\SetIdTrait;
-use function nl2br;
 use PDO;
 
 /**
  * All about the comments
  */
-class Comments implements CrudInterface
+class Comments implements RestInterface
 {
     use SetIdTrait;
 
@@ -29,34 +30,36 @@ class Comments implements CrudInterface
     public function __construct(public AbstractEntity $Entity, ?int $id = null)
     {
         $this->Db = Db::getConnection();
-        $this->id = $id;
+        $this->setId($id);
     }
 
-    public function create(ContentParamsInterface $params): int
+    public function getPage(): string
     {
-        $sql = 'INSERT INTO ' . $this->Entity->type . '_comments(datetime, item_id, comment, userid)
-            VALUES(:datetime, :item_id, :content, :userid)';
-        $req = $this->Db->prepare($sql);
-        $req->bindValue(':datetime', date('Y-m-d H:i:s'));
-        $req->bindParam(':item_id', $this->Entity->id, PDO::PARAM_INT);
-        $req->bindValue(':content', nl2br($params->getContent()));
-        $req->bindParam(':userid', $this->Entity->Users->userData['userid'], PDO::PARAM_INT);
-
-        $this->Db->execute($req);
-        if ($this->Entity instanceof Experiments) {
-            $this->createNotification();
-        }
-
-        return $this->Db->lastInsertId();
+        return sprintf('api/v2/%s/%d/comments/', $this->Entity->page, $this->Entity->id ?? 0);
     }
 
-    public function read(ContentParamsInterface $params): array
+    public function readOne(): array
     {
         $sql = 'SELECT ' . $this->Entity->type . "_comments.*,
-            CONCAT(users.firstname, ' ', users.lastname) AS fullname
+            CONCAT(users.firstname, ' ', users.lastname) AS fullname,
+            users.firstname, users.lastname, users.orcid
             FROM " . $this->Entity->type . '_comments
             LEFT JOIN users ON (' . $this->Entity->type . '_comments.userid = users.userid)
-            WHERE item_id = :id ORDER BY ' . $this->Entity->type . '_comments.datetime ASC';
+            WHERE ' . $this->Entity->type . '_comments.id = :id';
+        $req = $this->Db->prepare($sql);
+        $req->bindParam(':id', $this->id, PDO::PARAM_INT);
+        $this->Db->execute($req);
+        return $this->Db->fetch($req);
+    }
+
+    public function readAll(): array
+    {
+        $sql = 'SELECT ' . $this->Entity->type . "_comments.*,
+            CONCAT(users.firstname, ' ', users.lastname) AS fullname,
+            users.firstname, users.lastname, users.orcid
+            FROM " . $this->Entity->type . '_comments
+            LEFT JOIN users ON (' . $this->Entity->type . '_comments.userid = users.userid)
+            WHERE item_id = :id ORDER BY ' . $this->Entity->type . '_comments.created_at ASC';
         $req = $this->Db->prepare($sql);
         $req->bindParam(':id', $this->Entity->id, PDO::PARAM_INT);
         $this->Db->execute($req);
@@ -64,14 +67,25 @@ class Comments implements CrudInterface
         return $req->fetchAll();
     }
 
-    public function update(ContentParamsInterface $params): bool
+    public function patch(Action $action, array $params): array
+    {
+        $this->update(new CommentParam($params['comment']));
+        return $this->readOne();
+    }
+
+    public function postAction(Action $action, array $reqBody): int
+    {
+        return $this->create(new CommentParam($reqBody['comment'] ?? throw new ImproperActionException('Missing comment field.')));
+    }
+
+    public function update(CommentParam $params): bool
     {
         $this->Entity->canOrExplode('read');
         $sql = 'UPDATE ' . $this->Entity->type . '_comments SET
             comment = :content
             WHERE id = :id AND userid = :userid AND item_id = :item_id';
         $req = $this->Db->prepare($sql);
-        $req->bindValue(':content', nl2br($params->getContent()), PDO::PARAM_STR);
+        $req->bindValue(':content', $params->getContent(), PDO::PARAM_STR);
         $req->bindParam(':id', $this->id, PDO::PARAM_INT);
         $req->bindParam(':userid', $this->Entity->Users->userData['userid'], PDO::PARAM_INT);
         $req->bindParam(':item_id', $this->Entity->id, PDO::PARAM_INT);
@@ -90,13 +104,29 @@ class Comments implements CrudInterface
         return $this->Db->execute($req);
     }
 
+    private function create(CommentParam $params): int
+    {
+        $sql = 'INSERT INTO ' . $this->Entity->type . '_comments(item_id, comment, userid)
+            VALUES(:item_id, :content, :userid)';
+        $req = $this->Db->prepare($sql);
+        $req->bindParam(':item_id', $this->Entity->id, PDO::PARAM_INT);
+        $req->bindValue(':content', $params->getContent());
+        $req->bindParam(':userid', $this->Entity->Users->userData['userid'], PDO::PARAM_INT);
+
+        $this->Db->execute($req);
+        if ($this->Entity instanceof Experiments) {
+            $this->createNotification();
+        }
+
+        return $this->Db->lastInsertId();
+    }
+
     /**
      * Create a notification to the experiment owner to alert a comment was posted
      * (issue #160). Only for an experiment we don't own.
      */
     private function createNotification(): void
     {
-        $this->Entity->populate();
         if ($this->Entity->entityData['userid'] === $this->Entity->Users->userData['userid']) {
             return;
         }

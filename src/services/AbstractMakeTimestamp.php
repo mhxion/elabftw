@@ -10,9 +10,10 @@
 
 namespace Elabftw\Services;
 
-use Elabftw\Elabftw\CreateUpload;
+use Elabftw\Elabftw\CreateImmutableUpload;
 use Elabftw\Elabftw\FsTools;
 use Elabftw\Exceptions\ImproperActionException;
+use Elabftw\Interfaces\MakeTimestampInterface;
 use Elabftw\Interfaces\TimestampResponseInterface;
 use Elabftw\Models\Experiments;
 use ZipArchive;
@@ -22,12 +23,9 @@ use ZipArchive;
  * Based on:
  * http://www.d-mueller.de/blog/dealing-with-trusted-timestamps-in-php-rfc-3161
  */
-abstract class AbstractMakeTimestamp extends AbstractMake
+abstract class AbstractMakeTimestamp extends AbstractMake implements MakeTimestampInterface
 {
     public string $pdfPath = '';
-
-    /** @var Experiments $Entity */
-    protected $Entity;
 
     public function __construct(protected array $configArr, Experiments $entity)
     {
@@ -59,7 +57,7 @@ abstract class AbstractMakeTimestamp extends AbstractMake
         $ZipArchive->addFile($pdfPath, $pdfName);
         $ZipArchive->addFile($tsResponse->getTokenPath(), $tokenName);
         $ZipArchive->close();
-        return $this->Entity->Uploads->create(new CreateUpload($zipName, $zipPath, sprintf(_('Timestamp archive by %s'), $this->Entity->Users->userData['fullname'])));
+        return $this->Entity->Uploads->create(new CreateImmutableUpload($zipName, $zipPath, sprintf(_('Timestamp archive by %s'), $this->Entity->Users->userData['fullname'])));
     }
 
     /**
@@ -80,7 +78,7 @@ abstract class AbstractMakeTimestamp extends AbstractMake
             $userData['pdf_format'],
             (bool) $userData['pdfa'],
         );
-        $MakePdf = new MakePdf($MpdfProvider, $this->Entity);
+        $MakePdf = new MakeTimestampPdf($MpdfProvider, $this->Entity);
         return $MakePdf->getFileContent();
     }
 

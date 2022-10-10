@@ -27,6 +27,7 @@ use PDO;
 use function random_bytes;
 use function ucfirst;
 
+/** @psalm-suppress UnusedParam */
 class QueryBuilderVisitor implements Visitor
 {
     public function buildWhere(Visitable $parsedQuery, VisitorParameters $parameters): WhereCollector
@@ -100,8 +101,8 @@ class QueryBuilderVisitor implements Visitor
         // Tag and Metadata not implemented!
 
         // Call class methods dynamically to avoid many if statements.
-        // This works here because the parser defines the list of fields.
-        $method = 'visitField' . ucfirst($field->getFieldType());
+        // This works because the parser and the Fields enum define the list of fields.
+        $method = 'visitField' . ucfirst($field->getFieldType()->value);
         return $this->$method($field->getValue(), $field->getAffix(), $parameters);
     }
 
@@ -247,7 +248,7 @@ class QueryBuilderVisitor implements Visitor
     private function visitFieldCategory(string $searchTerm, string $affix, VisitorParameters $parameters): WhereCollector
     {
         return $this->getWhereCollector(
-            'categoryt.name LIKE ',
+            'categoryt.title LIKE ',
             $affix . $searchTerm . $affix,
             PDO::PARAM_STR,
         );
@@ -307,7 +308,7 @@ class QueryBuilderVisitor implements Visitor
     private function visitFieldStatus(string $searchTerm, string $affix, VisitorParameters $parameters): WhereCollector
     {
         return $this->getWhereCollector(
-            'categoryt.name LIKE ',
+            'categoryt.title LIKE ',
             $affix . $searchTerm . $affix,
             PDO::PARAM_STR,
         );

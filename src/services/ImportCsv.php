@@ -1,47 +1,34 @@
-<?php
+<?php declare(strict_types=1);
 /**
  * @author Nicolas CARPi <nico-git@deltablot.email>
- * @copyright 2012 Nicolas CARPi
+ * @copyright 2012, 2022 Nicolas CARPi
  * @see https://www.elabftw.net Official website
  * @license AGPL-3.0
  * @package elabftw
  */
-declare(strict_types=1);
 
 namespace Elabftw\Services;
 
-use Elabftw\Elabftw\TagParams;
+use Elabftw\Elabftw\Tools;
+use Elabftw\Enums\Action;
 use Elabftw\Exceptions\ImproperActionException;
+use Elabftw\Models\Experiments;
 use Elabftw\Models\Items;
-use Elabftw\Models\Users;
-use Elabftw\Traits\EntityTrait;
 use League\Csv\Info as CsvInfo;
 use League\Csv\Reader;
-use Symfony\Component\HttpFoundation\File\UploadedFile;
 
 /**
- * Import items from a csv file.
+ * Import entries from a csv file.
  */
 class ImportCsv extends AbstractImport
 {
-    use EntityTrait;
-
-    private const TAGS_SEPARATOR = '|';
-
-    // number of items we got into the database
-    public int $inserted = 0;
-
-    // the separation character of the csv provided by user
-    private string $delimiter;
-
-    public function __construct(Users $users, int $target, string $delimiter, string $canread, string $canwrite, UploadedFile $uploadedFile)
-    {
-        parent::__construct($users, $target, $canread, $canwrite, $uploadedFile);
-        $this->delimiter = Filter::sanitize($delimiter);
-        if ($this->delimiter === 'tab') {
-            $this->delimiter = "\t";
-        }
-    }
+    protected array $allowedMimes = array(
+        'application/csv',
+        'application/vnd.ms-excel',
+        'text/plain',
+        'text/csv',
+        'text/tsv',
+    );
 
     /**
      * Do the work
@@ -50,15 +37,25 @@ class ImportCsv extends AbstractImport
      */
     public function import(): void
     {
+        // we directly read from temporary uploaded file location and do not need to use the cache folder as no extraction is necessary for a .csv
         $csv = Reader::createFromPath($this->UploadedFile->getPathname(), 'r');
-        $this->checkDelimiter($csv);
-        $csv->setDelimiter($this->delimiter);
+        // get stats about the most likely delimiter
+        $delimitersCount = CsvInfo::getDelimiterStats($csv, array(',', '|', "\t", ';'), -1);
+        // reverse sort the array by value to get the delimiter with highest probability
+        arsort($delimitersCount, SORT_NUMERIC);
+        // set the delimiter from the first value
+        $csv->setDelimiter((string) key($delimitersCount));
         $csv->setHeaderOffset(0);
         $rows = $csv->getRecords();
 
         // SQL for importing
-        $sql = 'INSERT INTO items(team, title, date, body, userid, category, canread, canwrite, elabid)
-            VALUES(:team, :title, CURDATE(), :body, :userid, :category, :canread, :canwrite, :elabid)';
+        $sql = 'INSERT INTO items(team, title, date, body, userid, category, canread, canwrite, elabid, metadata)
+            VALUES(:team, :title, CURDATE(), :body, :userid, :category, :canread, :canwrite, :elabid, :metadata)';
+
+        if ($this->Entity instanceof Experiments) {
+            $sql = 'INSERT INTO experiments(title, date, body, userid, canread, canwrite, category, elabid, metadata)
+                VALUES(:title, CURDATE(), :body, :userid, :canread, :canwrite, :category, :elabid, :metadata)';
+        }
         $req = $this->Db->prepare($sql);
 
         // now loop the rows and do the import
@@ -67,16 +64,22 @@ class ImportCsv extends AbstractImport
                 throw new ImproperActionException('Could not find the title column!');
             }
             $body = $this->getBodyFromRow($row);
-            $elabid = $this->generateElabid();
+            $metadata = null;
+            if (isset($row['metadata'])) {
+                $metadata = $row['metadata'];
+            }
 
-            $req->bindParam(':team', $this->Users->userData['team']);
+            if ($this->Entity instanceof Items) {
+                $req->bindParam(':team', $this->Users->userData['team']);
+            }
             $req->bindParam(':title', $row['title']);
             $req->bindParam(':body', $body);
             $req->bindParam(':userid', $this->Users->userData['userid']);
-            $req->bindParam(':category', $this->target);
+            $req->bindParam(':category', $this->targetNumber);
             $req->bindParam(':canread', $this->canread);
             $req->bindParam(':canwrite', $this->canwrite);
-            $req->bindParam(':elabid', $elabid);
+            $req->bindValue(':elabid', Tools::generateElabid());
+            $req->bindParam(':metadata', $metadata);
             $this->Db->execute($req);
             $itemId = $this->Db->lastInsertId();
 
@@ -100,6 +103,8 @@ class ImportCsv extends AbstractImport
         unset($row['title']);
         // and the tags
         unset($row['tags']);
+        // and the metadata
+        unset($row['metadata']);
         // deal with the rest of the columns
         $body = '';
         foreach ($row as $subheader => $content) {
@@ -120,23 +125,8 @@ class ImportCsv extends AbstractImport
         foreach ($tagsArr as $tag) {
             // maybe it's empty for this row
             if ($tag) {
-                $Entity->Tags->create(new TagParams($tag));
+                $Entity->Tags->postAction(Action::Create, array('tag' => $tag));
             }
-        }
-    }
-
-    /**
-     * Make sure the delimiter character is what is intended
-     */
-    private function checkDelimiter(Reader $csv): void
-    {
-        $delimitersCount = CsvInfo::getDelimiterStats($csv, array(',', '|', "\t", ';'), -1);
-        // reverse sort the array by value to get the delimiter with highest probability
-        arsort($delimitersCount, SORT_NUMERIC);
-        // get the first element
-        $delimiter = (string) key($delimitersCount);
-        if ($delimiter !== $this->delimiter) {
-            throw new ImproperActionException(sprintf('It looks like the delimiter is different from «%1$s». Make sure to use «%1$s» as delimiter!', $this->delimiter));
         }
     }
 }

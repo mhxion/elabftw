@@ -10,108 +10,56 @@
 namespace Elabftw\Models;
 
 use Elabftw\Elabftw\Db;
+use Elabftw\Enums\State;
 use Elabftw\Exceptions\ImproperActionException;
-use Elabftw\Interfaces\ContentParamsInterface;
-use Elabftw\Interfaces\ItemTypeParamsInterface;
+use Elabftw\Services\Filter;
+use Elabftw\Traits\CategoryTrait;
 use Elabftw\Traits\SortableTrait;
 use PDO;
 
 /**
  * The kind of items you can have in the database for a team
+ * TODO permissions check
  */
-class ItemsTypes extends AbstractEntity
+class ItemsTypes extends AbstractTemplateEntity
 {
     use SortableTrait;
-
-    private int $team;
+    use CategoryTrait;
 
     public function __construct(public Users $Users, ?int $id = null)
     {
+        $this->type = parent::TYPE_ITEMS_TYPES;
         $this->Db = Db::getConnection();
-        $this->team = $this->Users->team;
-        $this->Links = new Links($this);
+        $this->ItemsLinks = new ItemsLinks($this);
+        $this->countableTable = 'items';
         $this->Steps = new Steps($this);
-        $this->type = 'items_types';
-        if ($id !== null) {
-            $this->setId($id);
-        }
+        $this->setId($id);
     }
 
-    public function create(ItemTypeParamsInterface $params): int
+    public function getPage(): string
     {
-        $sql = 'INSERT INTO items_types(name, team) VALUES(:content, :team)';
+        return 'admin.php?tab=5&templateid=';
+    }
+
+    public function create(string $title): int
+    {
+        $title = Filter::title($title);
+        $sql = 'INSERT INTO items_types(title, team) VALUES(:content, :team)';
         $req = $this->Db->prepare($sql);
-        $req->bindValue(':content', $params->getTitle(), PDO::PARAM_STR);
-        $req->bindParam(':team', $this->team, PDO::PARAM_INT);
+        $req->bindValue(':content', $title, PDO::PARAM_STR);
+        $req->bindParam(':team', $this->Users->team, PDO::PARAM_INT);
         $this->Db->execute($req);
 
         return $this->Db->lastInsertId();
     }
 
-    public function read(ContentParamsInterface $params): array
-    {
-        if ($params->getTarget() === 'all') {
-            return $this->readAll();
-        }
-
-        $sql = 'SELECT id, team, color, bookable, name, body, canread, canwrite, metadata, state
-            FROM items_types WHERE id = :id AND team = :team';
-        $req = $this->Db->prepare($sql);
-        $req->bindParam(':id', $this->id, PDO::PARAM_INT);
-        $req->bindParam(':team', $this->team, PDO::PARAM_INT);
-        $this->Db->execute($req);
-        return $this->Db->fetch($req);
-    }
-
-    public function duplicate(): int
-    {
-        return 1;
-    }
-
-    public function updateAll(ItemTypeParamsInterface $params): bool
-    {
-        $sql = 'UPDATE items_types SET
-            name = :name,
-            team = :team,
-            color = :color,
-            bookable = :bookable,
-            body = :body,
-            canread = :canread,
-            canwrite = :canwrite
-            WHERE id = :id';
-        $req = $this->Db->prepare($sql);
-        $req->bindValue(':name', $params->getContent(), PDO::PARAM_STR);
-        $req->bindValue(':color', $params->getColor(), PDO::PARAM_STR);
-        $req->bindValue(':bookable', $params->getIsBookable(), PDO::PARAM_INT);
-        $req->bindValue(':body', $params->getBody(), PDO::PARAM_STR);
-        $req->bindParam(':team', $this->team, PDO::PARAM_INT);
-        $req->bindValue(':canread', $params->getCanread(), PDO::PARAM_STR);
-        $req->bindValue(':canwrite', $params->getCanwriteS(), PDO::PARAM_STR);
-        $req->bindParam(':id', $this->id, PDO::PARAM_INT);
-
-        return $this->Db->execute($req);
-    }
-
-    /**
-     * Destroy an item type
-     */
-    public function destroy(): bool
-    {
-        // don't allow deletion of an item type with items
-        if ($this->countItems() > 0) {
-            throw new ImproperActionException(_('Remove all database items with this type before deleting this type.'));
-        }
-
-        return parent::destroy();
-    }
-
     /**
      * SQL to get all items type
      */
-    public function readAll(bool $getTags = true): array
+    public function readAll(): array
     {
         $sql = 'SELECT items_types.id AS category_id,
-            items_types.name AS category,
+            items_types.title AS category,
             items_types.color,
             items_types.bookable,
             items_types.body,
@@ -120,24 +68,45 @@ class ItemsTypes extends AbstractEntity
             items_types.canwrite
             FROM items_types WHERE team = :team AND state = :state ORDER BY ordering ASC';
         $req = $this->Db->prepare($sql);
-        $req->bindParam(':team', $this->team, PDO::PARAM_INT);
-        $req->bindValue(':state', self::STATE_NORMAL, PDO::PARAM_INT);
+        $req->bindParam(':team', $this->Users->team, PDO::PARAM_INT);
+        $req->bindValue(':state', State::Normal->value, PDO::PARAM_INT);
         $this->Db->execute($req);
 
         return $req->fetchAll();
     }
 
-    /**
-     * Count all items of this type
-     * TODO have a countable interface and maybe counttrait to merge this function with Status
-     */
-    protected function countItems(): int
+    public function readOne(): array
     {
-        $sql = 'SELECT COUNT(id) FROM items WHERE category = :category';
+        $sql = 'SELECT id, team, color, bookable, title, body, canread, canwrite, metadata, state
+            FROM items_types WHERE id = :id AND team = :team';
         $req = $this->Db->prepare($sql);
-        $req->bindParam(':category', $this->id, PDO::PARAM_INT);
+        $req->bindParam(':id', $this->id, PDO::PARAM_INT);
+        $req->bindParam(':team', $this->Users->team, PDO::PARAM_INT);
         $this->Db->execute($req);
 
-        return (int) $req->fetchColumn();
+        $this->entityData = $this->Db->fetch($req);
+        // don't check for read permissions for items types as it can be read from many places/users
+        //$this->canOrExplode('read');
+        // add steps and links in there too
+        $this->entityData['steps'] = $this->Steps->readAll();
+        $this->entityData['items_links'] = $this->ItemsLinks->readAll();
+        return $this->entityData;
+    }
+
+    public function duplicate(): int
+    {
+        return 1;
+    }
+
+    /**
+     * Destroy an item type
+     */
+    public function destroy(): bool
+    {
+        // don't allow deletion of an item type with items
+        if ($this->countEntities() > 0) {
+            throw new ImproperActionException(_('Remove all database items with this type before deleting this type.'));
+        }
+        return parent::destroy();
     }
 }

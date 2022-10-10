@@ -2,18 +2,20 @@
 
 {% block body %}
 <!-- UNVALIDATED USERS BLOCK -->
+<div id='unvalidatedUsersBox'>
 {% if unvalidatedUsersArr %}
   <div class='box'>
     {{ 'There are users waiting for validation of their account:'|trans|msg('warning', false) }}
     <ul>
     {% for user in unvalidatedUsersArr %}
       <li>
-        {{ user.fullname|raw }} ({{ user.email }}) <button class='button btn btn-primary usersValidate' data-userid='{{ user.userid }}'>{{ 'Validate'|trans }}</button>
+        {{ user.fullname|raw }} ({{ user.email }}) <button class='button btn btn-primary' data-action='validate-user' data-userid='{{ user.userid }}'>{{ 'Validate'|trans }}</button>
       </li>
     {% endfor %}
     </ul>
   </div>
 {% endif %}
+</div>
 
 <!-- ADMIN PANEL MAIN MENU -->
 <ul class='tabbed-menu'>
@@ -22,9 +24,8 @@
   <li data-action='switch-tab' data-tabtarget='3'>{{ 'Users'|trans }}</li>
   <li data-action='switch-tab' data-tabtarget='4'>{% trans %}Status{% plural 2 %}Status{% endtrans %}</li>
   <li data-action='switch-tab' data-tabtarget='5'>{{ 'Types of items'|trans }}</li>
-  <li data-action='switch-tab' data-tabtarget='6'>{{ 'Import'|trans }}</li>
-  <li data-action='switch-tab' data-tabtarget='7'>{{ 'Export'|trans }}</li>
-  <li data-action='switch-tab' data-tabtarget='8'>{{ 'Tag manager'|trans }}</li>
+  <li data-action='switch-tab' data-tabtarget='6'>{{ 'Export'|trans }}</li>
+  <li data-action='switch-tab' data-tabtarget='7'>{{ 'Tag manager'|trans }}</li>
 </ul>
 
 <!-- loading spinner -->
@@ -34,94 +35,90 @@
 
 <!-- TAB 1 TEAM CONFIG -->
 <div data-tabcontent='1' hidden>
-  <div class='box'>
+  <div class='box form-group'>
     <h3>{{ 'Configure your Team'|trans }}</h3>
     <hr>
-    <form class='form-group' method='post' action='app/controllers/AdminController.php' autocomplete='off'>
-      <input type='hidden' value='true' name='teamsUpdateFull' />
-      {{ App.Session.get('csrf')|csrf }}
-      <label for='deletable_xp'>{{ 'Users can delete experiments:'|trans }}</label>
-      <select class='form-control col-md-4' name='deletable_xp' id='deletable_xp'>
-        <option value='1'{{ teamConfigArr.deletable_xp ? " selected='selected'" }}>{{ 'Yes'|trans }}</option>
-        <option value='0'{{ not teamConfigArr.deletable_xp ? " selected='selected'" }}>{{ 'No'|trans }}</option>
-      </select>
-      <span class='smallgray'>{{ 'An admin account will always be able to delete experiments.'|trans }}</span>
+    <label for='deletable_xp'>{{ 'Users can delete experiments:'|trans }}</label>
+    <select class='form-control col-md-4' name='deletable_xp' id='deletable_xp'>
+      <option value='1'{{ teamConfigArr.deletable_xp ? " selected='selected'" }}>{{ 'Yes'|trans }}</option>
+      <option value='0'{{ not teamConfigArr.deletable_xp ? " selected='selected'" }}>{{ 'No'|trans }}</option>
+    </select>
+    <span class='smallgray'>{{ 'An admin account will always be able to delete experiments.'|trans }}</span>
 
-      <label for='deletable_item'>{{ 'Users can delete items:'|trans }}</label>
-      <select class='form-control col-md-4' name='deletable_item' id='deletable_item'>
-        <option value='1'{{ teamConfigArr.deletable_item ? " selected='selected'" }}>{{ 'Yes'|trans }}</option>
-        <option value='0'{{ not teamConfigArr.deletable_item ? " selected='selected'" }}>{{ 'No'|trans }}</option>
-      </select>
-      <span class='smallgray'>{{ 'An admin account will always be able to delete items.'|trans }}</span>
+    <label for='deletable_item'>{{ 'Users can delete items:'|trans }}</label>
+    <select class='form-control col-md-4' name='deletable_item' id='deletable_item'>
+      <option value='1'{{ teamConfigArr.deletable_item ? " selected='selected'" }}>{{ 'Yes'|trans }}</option>
+      <option value='0'{{ not teamConfigArr.deletable_item ? " selected='selected'" }}>{{ 'No'|trans }}</option>
+    </select>
+    <span class='smallgray'>{{ 'An admin account will always be able to delete items.'|trans }}</span>
 
-      <label for='user_create_tag'>{{ 'Users can create tags:'|trans }}</label>
-      <select class='form-control col-md-4' name='user_create_tag' id='user_create_tag'>
-        <option value='1'{{ teamConfigArr.user_create_tag ? " selected='selected'" }}>{{ 'Yes'|trans }}</option>
-        <option value='0'{{ not teamConfigArr.user_create_tag ? " selected='selected'" }}>{{ 'No'|trans }}</option>
-      </select>
-      <span class='smallgray'>{{ 'An admin account will always be able to create tags.'|trans }}</span>
+    <label for='user_create_tag'>{{ 'Users can create tags:'|trans }}</label>
+    <select class='form-control col-md-4' name='user_create_tag' id='user_create_tag'>
+      <option value='1'{{ teamConfigArr.user_create_tag ? " selected='selected'" }}>{{ 'Yes'|trans }}</option>
+      <option value='0'{{ not teamConfigArr.user_create_tag ? " selected='selected'" }}>{{ 'No'|trans }}</option>
+    </select>
+    <span class='smallgray'>{{ 'An admin account will always be able to create tags.'|trans }}</span>
 
-      <label for='force_exp_tpl'>{{ 'Force experiment template use:'|trans }}</label>
-      <select class='form-control col-md-4' name='force_exp_tpl' id='force_exp_tpl'>
-        <option value='1'{{ teamConfigArr.force_exp_tpl ? " selected='selected'" }}>{{ 'Yes'|trans }}</option>
-        <option value='0'{{ not teamConfigArr.force_exp_tpl ? " selected='selected'" }}>{{ 'No'|trans }}</option>
-      </select>
+    <label for='force_exp_tpl'>{{ 'Force experiment template use:'|trans }}</label>
+    <select class='form-control col-md-4' name='force_exp_tpl' id='force_exp_tpl'>
+      <option value='1'{{ teamConfigArr.force_exp_tpl ? " selected='selected'" }}>{{ 'Yes'|trans }}</option>
+      <option value='0'{{ not teamConfigArr.force_exp_tpl ? " selected='selected'" }}>{{ 'No'|trans }}</option>
+    </select>
 
-      <label for='public_db'>{{ 'Anonymous visitors can see database items:'|trans }}</label>
-      <select class='form-control col-md-4' name='public_db' id='public_db'>
-        <option value='1'{{ teamConfigArr.public_db ? " selected='selected'" }}>{{ 'Yes'|trans }}</option>
-        <option value='0'{{ not teamConfigArr.public_db ? " selected='selected'" }}>{{ 'No'|trans }}</option>
-      </select>
+    <label for='public_db'>{{ 'Anonymous visitors can see database items:'|trans }}</label>
+    <select class='form-control col-md-4' name='public_db' id='public_db'>
+      <option value='1'{{ teamConfigArr.public_db ? " selected='selected'" }}>{{ 'Yes'|trans }}</option>
+      <option value='0'{{ not teamConfigArr.public_db ? " selected='selected'" }}>{{ 'No'|trans }}</option>
+    </select>
 
-      <label for='link_name'>{{ 'Name of the link in the top menu:'|trans }}</label>
-      <input class='form-control col-md-4' type='text' value='{{ teamConfigArr.link_name }}' name='link_name' id='link_name' />
+    <label for='link_name'>{{ 'Name of the link in the top menu:'|trans }}</label>
+    <input class='form-control col-md-4' type='text' value='{{ teamConfigArr.link_name }}' name='link_name' id='link_name' />
 
-      <label for='link_href'>{{ 'Address where this link should point:'|trans }}</label>
-      <input class='mb-4 form-control col-md-4' type='text' value='{{ teamConfigArr.link_href }}' name='link_href' id='link_href' />
+    <label for='link_href'>{{ 'Address where this link should point:'|trans }}</label>
+    <input class='mb-4 form-control col-md-4' type='text' value='{{ teamConfigArr.link_href }}' name='link_href' id='link_href' />
 
-      <label for='do_force_canread'>{{ 'Enforce read permissions?'|trans }}</label>
-      <select class='form-control col-md-4' name='do_force_canread' id='do_force_canread'>
-        <option value='1'{{ teamConfigArr.do_force_canread ? " selected='selected'" }}>{{ 'Yes'|trans }}</option>
-        <option value='0'{{ not teamConfigArr.do_force_canread ? " selected='selected'" }}>{{ 'No'|trans }}</option>
-      </select>
-      <span class='smallgray'>{{ 'Select if you want to enforce read permissions on experiments'|trans }}</span>
+    <label for='do_force_canread'>{{ 'Enforce read permissions?'|trans }}</label>
+    <select class='form-control col-md-4' name='do_force_canread' id='do_force_canread'>
+      <option value='1'{{ teamConfigArr.do_force_canread ? " selected='selected'" }}>{{ 'Yes'|trans }}</option>
+      <option value='0'{{ not teamConfigArr.do_force_canread ? " selected='selected'" }}>{{ 'No'|trans }}</option>
+    </select>
+    <span class='smallgray'>{{ 'Select if you want to enforce read permissions on experiments'|trans }}</span>
 
-      <label for='force_canread'>{{ 'Enforced read permissions on experiments'|trans }}</label>
-      <select class='form-control col-md-4' name='force_canread' id='force_canread'>
-        <option value='public'{{ teamConfigArr.force_canread == 'public' ? " selected='selected'" }}>{{ 'Public'|trans }}</option>
-        <option value='organization'{{ teamConfigArr.force_canread == 'organization' ? " selected='selected'" }}>{{ 'Organization'|trans }}</option>
-        <option value='team'{{ teamConfigArr.force_canread == 'team' ? " selected='selected'" }}>{{ 'Team'|trans }}</option>
-        <option value='user'{{ teamConfigArr.force_canread == 'user' ? " selected='selected'" }}>{{ 'User'|trans }}</option>
-      </select>
-      <span class='smallgray'>{{ 'Enforce the read permission for all experiments of users in this team.'|trans }}</span>
+    <label for='force_canread'>{{ 'Enforced read permissions on experiments'|trans }}</label>
+    <select class='form-control col-md-4' name='force_canread' id='force_canread'>
+      <option value='public'{{ teamConfigArr.force_canread == 'public' ? " selected='selected'" }}>{{ 'Public'|trans }}</option>
+      <option value='organization'{{ teamConfigArr.force_canread == 'organization' ? " selected='selected'" }}>{{ 'Organization'|trans }}</option>
+      <option value='team'{{ teamConfigArr.force_canread == 'team' ? " selected='selected'" }}>{{ 'Team'|trans }}</option>
+      <option value='user'{{ teamConfigArr.force_canread == 'user' ? " selected='selected'" }}>{{ 'User'|trans }}</option>
+    </select>
+    <span class='smallgray'>{{ 'Enforce the read permission for all experiments of users in this team.'|trans }}</span>
 
-      <label for='do_force_canwrite'>{{ 'Enforce write permissions?'|trans }}</label>
-      <select class='form-control col-md-4' name='do_force_canwrite' id='do_force_canwrite'>
-        <option value='1'{{ teamConfigArr.do_force_canwrite ? " selected='selected'" }}>{{ 'Yes'|trans }}</option>
-        <option value='0'{{ not teamConfigArr.do_force_canwrite ? " selected='selected'" }}>{{ 'No'|trans }}</option>
-      </select>
-      <span class='smallgray'>{{ 'Select if you want to enforce write permissions on experiments'|trans }}</span>
+    <label for='do_force_canwrite'>{{ 'Enforce write permissions?'|trans }}</label>
+    <select class='form-control col-md-4' name='do_force_canwrite' id='do_force_canwrite'>
+      <option value='1'{{ teamConfigArr.do_force_canwrite ? " selected='selected'" }}>{{ 'Yes'|trans }}</option>
+      <option value='0'{{ not teamConfigArr.do_force_canwrite ? " selected='selected'" }}>{{ 'No'|trans }}</option>
+    </select>
+    <span class='smallgray'>{{ 'Select if you want to enforce write permissions on experiments'|trans }}</span>
 
-      <label for='force_canwrite'>{{ 'Enforced write permissions on experiments'|trans }}</label>
-      <select class='form-control col-md-4' name='force_canwrite' id='force_canwrite'>
-        <option value='public'{{ teamConfigArr.force_canwrite == 'public' ? " selected='selected'" }}>{{ 'Public'|trans }}</option>
-        <option value='organization'{{ teamConfigArr.force_canwrite == 'organization' ? " selected='selected'" }}>{{ 'Organization'|trans }}</option>
-        <option value='team'{{ teamConfigArr.force_canwrite == 'team' ? " selected='selected'" }}>{{ 'Team'|trans }}</option>
-        <option value='user'{{ teamConfigArr.force_canwrite == 'user' ? " selected='selected'" }}>{{ 'User'|trans }}</option>
-      </select>
-      <span class='smallgray'>{{ 'Enforce the write permission for all experiments of users in this team.'|trans }}</span>
+    <label for='force_canwrite'>{{ 'Enforced write permissions on experiments'|trans }}</label>
+    <select class='form-control col-md-4' name='force_canwrite' id='force_canwrite'>
+      <option value='public'{{ teamConfigArr.force_canwrite == 'public' ? " selected='selected'" }}>{{ 'Public'|trans }}</option>
+      <option value='organization'{{ teamConfigArr.force_canwrite == 'organization' ? " selected='selected'" }}>{{ 'Organization'|trans }}</option>
+      <option value='team'{{ teamConfigArr.force_canwrite == 'team' ? " selected='selected'" }}>{{ 'Team'|trans }}</option>
+      <option value='user'{{ teamConfigArr.force_canwrite == 'user' ? " selected='selected'" }}>{{ 'User'|trans }}</option>
+    </select>
+    <span class='smallgray'>{{ 'Enforce the write permission for all experiments of users in this team.'|trans }}</span>
 
-      <br>
-      <label for="common_template">{{ 'Common Experiment Template'|trans }}</label>
-      <textarea style='height:400px' class='mceditable' name="common_template" id='common_template'>
-          {{ teamConfigArr.common_template|raw }}
-      </textarea>
-      <span class='smallgray'>{{ 'This is the default text when someone creates an experiment.'|trans }}</span>
+    <br>
+    <label for="common_template">{{ 'Common Experiment Template'|trans }}</label>
+    <textarea style='height:400px' class='mceditable' name="common_template" id='common_template'>
+        {{ teamConfigArr.common_template|raw }}
+    </textarea>
+    <span class='smallgray'>{{ 'This is the default text when someone creates an experiment.'|trans }}</span>
 
-      <div class='mt-4 text-center'>
-        <button type='submit' class='button btn btn-primary'>Save</button>
-      </div>
-    </form>
+    <div class='mt-4 text-center'>
+      <button data-action='patch-team-admin' data-id='{{ teamConfigArr.id }}' class='button btn btn-primary'>{{ 'Save'|trans }}</button>
+    </div>
   </div>
 </div>
 
@@ -134,7 +131,7 @@
     <!-- CREATE A GROUP -->
     <label for='teamGroupCreate'>{{ 'Create a group'|trans }}</label>
     <input class='form-control col-md-4 custom-control-inline' id='teamGroupCreate' type='text' />
-    <button type='submit' data-action='create-teamgroup' id='teamGroupCreateBtn' class='button btn btn-primary'>{{ 'Create'|trans }}</button>
+    <button type='submit' data-action='create-teamgroup' data-teamid='{{ App.Users.userData.team }}' id='teamGroupCreateBtn' class='button btn btn-primary'>{{ 'Create'|trans }}</button>
     <!-- END CREATE GROUP -->
 
     <!-- SHOW EXISTING GROUPS -->
@@ -146,11 +143,11 @@
           <a class='clickable teamGroupDelete float-right' data-id='{{ teamGroup.id }}' title='{{ 'Delete'|trans }}'>
             <i class='fas fa-trash-alt'></i>
           </a>
-          <h3 class='editable mb-2 teamgroup_name' data-id='{{ teamGroup.id }}'>{{ teamGroup.name }}</h3>
+          <h3 class='editable mb-2 teamgroup_name' data-teamid='{{ App.Users.userData.team }}' data-id='{{ teamGroup.id }}'>{{ teamGroup.name|raw }}</h3>
           {% for user in teamGroup.users %}
-            <span class='user-badge clickable rmUserFromGroup hover-danger' data-user='{{ user.userid }}' data-group='{{ teamGroup.id }}' title='{{ 'Delete'|trans }}'>{{ user.fullname|raw }}</span>
+            <span class='user-badge clickable rmUserFromGroup hover-danger' data-user='{{ user.userid }}' data-teamid='{{ App.Users.userData.team }}' data-group='{{ teamGroup.id }}' title='{{ 'Delete'|trans }}'>{{ user.fullname|raw }}</span>
           {% endfor %}
-          <input aria-label='{{ 'Add user'|trans }}' class='form-control col-md-4 addUserToGroup d-block mt-2' autocomplete='off' data-group={{ teamGroup.id }} placeholder='{{ 'Add user'|trans }}' type='text' />
+          <input aria-label='{{ 'Add user'|trans }}' class='form-control col-md-4 addUserToGroup d-block mt-2' data-teamid='{{ App.Users.userData.team }}' autocomplete='off' data-group={{ teamGroup.id }} placeholder='{{ 'Add user'|trans }}' type='text' />
         </div>
       {% endfor %}
     </div>
@@ -180,12 +177,12 @@
       </div>
 
       <div class='col-auto mt-4'>
-        <button class='button btn btn-primary' data-action='create-status'>{{ 'Save'|trans }}</button>
+        <button class='button btn btn-primary' data-teamid='{{ App.Users.userData.team }}' data-action='create-status'>{{ 'Save'|trans }}</button>
       </div>
     </div>
   </div>
 
-  <div class='box'>
+  <div class='box' id='statusBox'>
     <h3>{{ 'Edit an Existing Status'|trans }}</h3>
     <hr>
     <ul class='list-group sortable' data-axis='y' data-table='status'>
@@ -209,11 +206,11 @@
             </li>
 
             <li class='list-inline-item'>
-              <button data-statusid='{{ status.category_id }}' class='button btn btn-primary' data-action='update-status'>{{ 'Save'|trans }}</button>
+              <button data-id='{{ status.category_id }}' class='button btn btn-primary' data-teamid='{{ App.Users.userData.team }}' data-action='update-status'>{{ 'Save'|trans }}</button>
             </li>
 
             <li class='list-inline-item'>
-              <button data-statusid='{{ status.category_id }}' data-action='destroy-status' class='button btn btn-danger' >{{ 'Delete'|trans }}</button>
+              <button data-id='{{ status.category_id }}' data-teamid='{{ App.Users.userData.team }}' data-action='destroy-status' class='button btn btn-danger' >{{ 'Delete'|trans }}</button>
             </li>
             <li class='list-inline-item'>
               <span class='draggable sortableHandle float-right'>
@@ -258,20 +255,20 @@
     <hr>
 
     <!-- templateData will be loaded with content from an item type if templateid is present is url -->
-    {% if templateData %}
+    {% if Entity.entityData %}
       <ul class='list-inline'>
         <li class='list-inline-item'>
           <label for='itemsTypesName'>{{ 'Name'|trans }}</label>
-          <input type='text' class='form-control' id='itemsTypesName' value='{{ templateData.name|raw }}' />
+          <input type='text' class='form-control' id='itemsTypesName' value='{{ Entity.entityData.title|raw }}' />
         </li>
 
         <li class='list-inline-item col-1 align-top'>
           <label for='itemsTypesColor'>{{ 'Color'|trans }}</label>
-          <input class='form-control' type='color' id='itemsTypesColor' value='#{{ templateData.color }}' />
+          <input class='form-control' type='color' id='itemsTypesColor' value='#{{ Entity.entityData.color }}' />
         </li>
 
         <li class='list-inline-item'>
-          <input id='itemsTypesBookable' type='checkbox' {{ templateData.bookable ? " checked" }} />
+          <input id='itemsTypesBookable' type='checkbox' {{ Entity.entityData.bookable ? " checked" }} />
           <label for='itemsTypesBookable'>{{ 'Bookable'|trans }}</label>
         </li>
 
@@ -280,7 +277,7 @@
           <select id='itemsTypesCanread' class='form-control'>
             {% for key, value in visibilityArr %}
               <option value='{{ key }}'
-              {{ key == templateData.canread ? ' selected' }}
+              {{ key == Entity.entityData.canread ? ' selected' }}
               >{{ value|trans }}</option>
             {% endfor %}
           </select>
@@ -291,7 +288,7 @@
           <select id='itemsTypesCanwrite' class='form-control'>
             {% for key, value in visibilityArr %}
               <option value='{{ key }}'
-              {{ key == templateData.canwrite ? ' selected' }}
+              {{ key == Entity.entityData.canwrite ? ' selected' }}
               >{{ value|trans }}</option>
             {% endfor %}
           </select>
@@ -299,7 +296,7 @@
       </ul>
 
       <div>
-        <textarea class='mceditable' id='itemsTypesBody'>{{ templateData.body }}</textarea>
+        <textarea class='mceditable' id='itemsTypesBody'>{{ Entity.entityData.body }}</textarea>
       </div>
 
       {% set mode = 'edit-template' %}
@@ -308,8 +305,8 @@
       {% include 'json-editor.html' %}
 
       <div class='text-center'>
-        <button class='button btn btn-primary' data-id='{{ templateData.id }}' data-action='itemstypes-update'>{{ 'Save'|trans }}</button>
-        <button class='button btn btn-danger' data-id='{{ templateData.id }}' data-action='itemstypes-destroy'>{{ 'Delete'|trans }}</button>
+        <button class='button btn btn-primary' data-id='{{ Entity.id }}' data-action='itemstypes-update'>{{ 'Save'|trans }}</button>
+        <button class='button btn btn-danger' data-id='{{ Entity.id }}' data-action='itemstypes-destroy'>{{ 'Delete'|trans }}</button>
       </div>
     {% endif %}
 
@@ -328,114 +325,8 @@
 
 </div>
 
-<!-- TAB 6 IMPORT -->
+<!-- TAB 6 EXPORT -->
 <div data-tabcontent='6' hidden>
-  <div class='box'>
-    <h3>{{ 'Import a CSV File'|trans }}</h3>
-    <hr>
-    <p style='text-align:justify'>
-      {{ "Import a .csv (Excel spreadsheet) file into the database. First you need to open your .xls/.xlsx file in Excel or Libreoffice and save it as .csv. IMPORTANT: one of the column MUST be named 'title'. You should make a tiny import of 3 lines to see if everything works before importing a big file."|trans }}
-    </p>
-
-    <form class='form-group' enctype='multipart/form-data' action='app/controllers/ImportController.php' method='post'>
-      <label for='target_csv'>{{ '1. Select a type of item to import to:'|trans }}</label>
-      <select class='form-control col-md-4' id='target_csv' autocomplete='off' name='target'>
-        <option selected disabled>--------</option>
-        {% for itemsType in itemsCategoryArr %}
-        <option value='{{ itemsType.category_id }}'>{{ itemsType.category }}</option>
-        {% endfor %}
-      </select>
-
-      <label for='visibility_csv'>{{ '2. Select a visibility:'|trans }}</label>
-      <select class='form-control col-md-4' id='visibility_csv' autocomplete='off' name='canread'>
-        {% for key, value in visibilityArr %}
-          <option value='{{ key }}'
-          {{ 'team' == key ? ' selected' }}
-          >{{ value|trans }}</option>
-        {% endfor %}
-      </select>
-
-      <label for='canwrite_csv'>{{ '2b. Select write access:'|trans }}</label>
-      <select class='form-control col-md-4' id='canwrite_csv' autocomplete='off' name='canwrite'>
-        {% for key, value in visibilityArr %}
-          <option value='{{ key }}'
-          {{ 'team' == key ? ' selected' }}
-          >{{ value|trans }}</option>
-        {% endfor %}
-      </select>
-
-
-      <label for='separator_csv'>{{ '3. Select a delimiter:'|trans }}</label>
-      <select class='form-control col-md-4' id='separator_csv' autocomplete='off' name='delimiter'>
-        <option value=';'>; ({{ 'semicolon'|trans }})</option>
-        <option value=','>, ({{ 'comma'|trans }})</option>
-        <option value='tab'>{{ 'Tab'|trans }}</option>
-      </select>
-
-      {{ App.Session.get('csrf')|csrf }}
-      <label for='csvuploader' class='d-block'>{{ '4. Select a CSV file to import:'|trans }}</label>
-      <input id='csvuploader' name='file' type='file' accept='.csv' />
-      <input name='type' type='hidden' value='csv' />
-      <div class='mt-4 text-center'>
-        <button type='submit' class='button btn btn-primary'>{{ 'Import CSV'|trans }}</button>
-      </div>
-    </form>
-  </div>
-
-  <div class='box'>
-    <h3>{{ 'Import a ZIP File'|trans }}</h3>
-    <hr>
-    <p>
-      {{ "Import a .elabftw.zip archive."|trans }} <span class='font-weight-bold'>{{ 'You should make a backup of your database before importing thousands of items!'|trans }}</span>
-    </p>
-
-    <form class='form-group' enctype='multipart/form-data' action='app/controllers/ImportController.php' method='post'>
-      <label for='target_zip'>{{ '1. Select where to import:'|trans }}</label>
-      <select class='form-control col-md-4' id='target_zip' autocomplete='off' name='target'>
-        <option selected disabled>-------</option>
-        <option disabled>{{ 'Import in database'|trans }}</option>
-        {% for itemsType in itemsCategoryArr %}
-          <option value='{{ itemsType.category_id }}'>{{ itemsType.category }}</option>
-        {% endfor %}
-        <option disabled>{{ 'Import in experiments'|trans }}</option>
-        {% for user in allTeamUsersArr %}
-          <option value='{{ user.userid }}'>{{ user.fullname|raw }}</option>
-        {% endfor %}
-      </select>
-
-      <label for='visibility_zip'>{{ '2. Select a visibility:'|trans }}</label>
-      <select class='form-control col-md-4' id='visibility_zip' autocomplete='off' name='canread'>
-        {% for key, value in visibilityArr %}
-          <option value='{{ key }}'
-          {{ 'team' == key ? ' selected' }}
-          >{{ value|trans }}</option>
-          {% endfor %}
-      </select>
-
-      <label for='canwrite_zip'>{{ '2b. Select write access:'|trans }}</label>
-      <select class='form-control col-md-4' id='canwrite_zip' autocomplete='off' name='canwrite'>
-        {% for key, value in visibilityArr %}
-          <option value='{{ key }}'
-          {{ 'team' == key ? ' selected' }}
-          >{{ value|trans }}</option>
-        {% endfor %}
-      </select>
-
-      {{ App.Session.get('csrf')|csrf }}
-      <label class='d-block' for='zipuploader'>{{ '3. Select a ZIP file to import:'|trans }}</label>
-      <input id='zipuploader' name='file' type='file' accept='.zip' />
-      <input name='type' type='hidden' value='zip' />
-
-      <div class='mt-4 text-center'>
-        <button type='submit' class='button btn btn-primary'>{{ 'Import ZIP'|trans }}</button>
-      </div>
-
-    </form>
-  </div>
-</div>
-
-<!-- TAB 7 EXPORT -->
-<div data-tabcontent='7' hidden>
   <div class='box'>
     <h3>{{ 'Export database items'|trans }}</h3>
     <hr>
@@ -447,11 +338,12 @@
     </select>
     <label for='categoryExportFormat'>{{ 'Select export format:'|trans }}</label>
     <select class='form-control col-md-4' id='categoryExportFormat' autocomplete='off'>
-      <option value='zip'>{{ 'Make Zip'|trans }}</option>
-      <option value='csv'>{{ 'Make Csv'|trans }}</option>
-      <option value='multiPdf'>{{ 'Make PDF'|trans }}</option>
-      <option value='qrPdf'>{{ 'Make QR codes PDF'|trans }}</option>
-      <option value='json'>{{ 'Make JSON'|trans }}</option>
+      <option value='eln'>{{ 'ELN Archive'|trans }}</option>
+      <option value='zip'>{{ 'ZIP Archive'|trans }}</option>
+      <option value='csv'>{{ 'CSV File'|trans }}</option>
+      <option value='multipdf'>{{ 'PDF File'|trans }}</option>
+      <option value='qrpdf'>{{ 'QR codes PDF'|trans }}</option>
+      <option value='json'>{{ 'JSON'|trans }}</option>
     </select>
 
 
@@ -469,11 +361,12 @@
     </select>
     <label for='userExportFormat'>{{ 'Select export format:'|trans }}</label>
     <select class='form-control col-md-4' id='userExportFormat' autocomplete='off'>
-      <option value='zip'>{{ 'Make Zip'|trans }}</option>
-      <option value='csv'>{{ 'Make Csv'|trans }}</option>
-      <option value='multiPdf'>{{ 'Make PDF'|trans }}</option>
-      <option value='qrPdf'>{{ 'Make QR codes PDF'|trans }}</option>
-      <option value='json'>{{ 'Make JSON'|trans }}</option>
+      <option value='eln'>{{ 'ELN Archive'|trans }}</option>
+      <option value='zip'>{{ 'ZIP Archive'|trans }}</option>
+      <option value='csv'>{{ 'CSV File'|trans }}</option>
+      <option value='multipdf'>{{ 'PDF File'|trans }}</option>
+      <option value='qrpdf'>{{ 'QR codes PDF'|trans }}</option>
+      <option value='json'>{{ 'JSON'|trans }}</option>
     </select>
 
 
@@ -494,8 +387,8 @@
   </div>
 </div>
 
-<!-- TAB 8 TAG MANAGER -->
-<div data-tabcontent='8' hidden>
+<!-- TAB 7 TAG MANAGER -->
+<div data-tabcontent='7' hidden>
   <div class='box'>
     <h3>{{ 'Manage tags of the team'|trans }}</h3>
     <hr>
@@ -511,7 +404,7 @@
         <a title='{{ 'Show tagged items'|trans }}' href='database.php?mode=show&tags[]={{ tag.tag|url_encode }}'>
           <i class='fas fa-external-link-square-alt'></i>
         </a>
-        <a class='mr-1' data-action='destroy-tag' data-tagid='{{ tag.id }}' title='{{ 'Delete'|trans }}'><i class='fas fa-trash-alt'></i></a><span class='tag editable hl-hover' data-tagid='{{ tag.id }}'>{{ tag.tag|raw }}</span></p>
+        <a class='mr-1' data-action='destroy-tag' data-tagid='{{ tag.id }}' title='{{ 'Delete'|trans }}'><i class='fas fa-trash-alt'></i></a><span class='tag editable hl-hover' data-id='{{ tag.id }}'>{{ tag.tag|raw }}</span></p>
       {% endfor %}
     </div>
   </div>

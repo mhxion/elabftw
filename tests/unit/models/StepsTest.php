@@ -9,8 +9,7 @@
 
 namespace Elabftw\Models;
 
-use Elabftw\Elabftw\ContentParams;
-use Elabftw\Elabftw\StepParams;
+use Elabftw\Enums\Action;
 
 class StepsTest extends \PHPUnit\Framework\TestCase
 {
@@ -24,35 +23,31 @@ class StepsTest extends \PHPUnit\Framework\TestCase
         $this->Steps = $this->Experiments->Steps;
     }
 
-    public function testCreate(): void
+    public function testCreateAndFinish(): void
     {
-        $this->Steps->create(new StepParams('do this'));
-    }
-
-    public function testFinish(): void
-    {
-        $this->Steps->update(new StepParams('', 'finished'));
+        $id = $this->Steps->postAction(Action::Create, array('body' => 'do this'));
+        $this->assertIsInt($id);
+        $this->Steps->setId($id);
+        $step = $this->Steps->patch(Action::Finish, array());
+        $this->assertEquals(1, $step['finished']);
     }
 
     public function testRead(): void
     {
-        $this->assertIsArray($this->Steps->read(new ContentParams()));
+        $this->assertIsArray($this->Steps->readAll());
     }
 
     public function testUpdate(): void
     {
-        $id = $this->Steps->create(new StepParams('do that'));
+        $id = $this->Steps->postAction(Action::Create, array('body' => 'some step'));
         $Steps = new Steps($this->Experiments, $id);
-        $Steps->update(new StepParams('updated step body', 'body'));
-        $ourStep = array_filter($this->Steps->read(new ContentParams()), function ($s) use ($id) {
-            return ((int) $s['id']) === $id;
-        });
-        $this->assertEquals(array_pop($ourStep)['body'], 'updated step body');
+        $step = $Steps->patch(Action::Update, array('body' => 'updated step body'));
+        $this->assertEquals('updated step body', $step['body']);
         // update deadline
-        $Steps->update(new StepParams('2022-03-23 13:37:00', 'deadline'));
-        $Steps->update(new StepParams('', 'deadline_notif'));
+        $Steps->patch(Action::Update, array('deadline' => '2022-03-23 13:37:00'));
+        $Steps->patch(Action::Notif, array());
         // update finish time_time
-        $Steps->update(new StepParams('2022-03-23 13:37:00', 'finished_time'));
+        $Steps->patch(Action::Update, array('finished_time' => '2022-03-23 13:37:00'));
     }
 
     public function testDestroy(): void

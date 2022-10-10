@@ -14,10 +14,13 @@ declare global {
 
 import { anyToJson } from 'bio-parsers/umd/bio-parsers';
 import { notif, reloadElement } from './misc';
+import { Action, Model } from './interfaces';
+import { Api } from './Apiv2.class';
 
 // DISPLAY Plasmids FILES
 export function displayPlasmidViewer(about: DOMStringMap): void {
   const editor: any = {};
+  const ApiC = new Api();
   Array.from(document.getElementsByClassName('viewer-ove')).forEach(el => {
     const oveDivDataset = (el as HTMLDivElement).dataset;
     const viewerID = el.id;
@@ -36,15 +39,13 @@ export function displayPlasmidViewer(about: DOMStringMap): void {
       const reader = new FileReader();
       reader.readAsDataURL(opts.pngFile);
       reader.onloadend = function(): void {
-        $.post('app/controllers/EntityAjaxController.php', {
-          saveAsImage: true,
-          realName: realName + '.png',
-          content: reader.result, // the png as data url
-          id: about.id,
-          type: about.type,
-        }).done(function(json) {
-          notif(json);
-        });
+        const params = {
+          'action': Action.CreateFromString,
+          'file_type': 'png',
+          'real_name': realName + '.png',
+          'content': reader.result,
+        };
+        ApiC.post(`${about.type}/${about.id}/${Model.Upload}`, params).then(() => reloadElement('filesdiv'));
       };
     }
 
@@ -58,18 +59,17 @@ export function displayPlasmidViewer(about: DOMStringMap): void {
       // parsedData[0].messages //either an array of strings giving any warnings or errors generated during the parsing process
       // Test if fileContent was parsed successfully. if false: show notification
       if (parsedData.length === 0) {
-        console.error('Problem with file: ' + realName);
-        return;
+        throw 'Problem with file: ' + realName;
       }
 
       if (parsedData[0].success === false) {
-        notif({res: false, msg: 'Invalid DNA data in file ' + realName});
-        return;
+        const msg = 'Invalid DNA data in file ' + realName;
+        notif({res: false, msg: msg});
+        throw msg;
       }
 
       if (parsedData[0].messages.length !== 0) {
-        console.error('File: ' + realName + '; ' + parsedData[0].messages[0]);
-        return;
+        throw 'File: ' + realName + '\n' + parsedData[0].messages.join('\n');
       }
 
       const parsedSequence = parsedData[0].parsedSequence;
@@ -125,6 +125,7 @@ export function displayPlasmidViewer(about: DOMStringMap): void {
         showMenuBar: false,
         withRotateCircularView: false,
         showReadOnly: false,
+        disableSetReadOnly: true,
         showGCContentByDefault: true,
         alwaysAllowSave: true,
         generatePng: true,
@@ -187,7 +188,7 @@ export function displayPlasmidViewer(about: DOMStringMap): void {
         },
         StatusBarProps: {
           showCircularity: false,
-          showReadOnly: false,
+          showReadOnly: true,
           showAvailability: false,
         },
       };
@@ -228,7 +229,7 @@ export function displayPlasmidViewer(about: DOMStringMap): void {
       };
 
       // Change layout for linear sequences
-      if (parsedSequence.circular == false) {
+      if (!parsedSequence.circular) {
         editorState.panelsShown[0][1].active = true;
         editorState.panelsShown[0].shift();
       }
@@ -241,20 +242,18 @@ export function displayPlasmidViewer(about: DOMStringMap): void {
     }
 
     // load DNA data either as File (.dna files Snapgene) or as String
-    if (isSnapGeneFile) {
-      const xhr = new XMLHttpRequest();
-      xhr.open('GET', filename, true);
-      xhr.responseType = 'blob';
-      xhr.onload = function(): void {
-        if (this.status == 200) {
-          parseFile(blobToFile(this.response, realName));
+    fetch(filename).then(response => {
+      if (response.ok) {
+        if (isSnapGeneFile) {
+          return response.blob().then(blob => parseFile(blobToFile(blob, realName)));
         }
-      };
-      xhr.send();
-    } else {
-      $.get(filename, function(fileContent) {
-        parseFile(fileContent);
-      }, 'text');
-    }
+
+        return response.text().then(fileContent => parseFile(fileContent));
+      }
+
+      return Promise.reject(response.status);
+    }).catch(error => {
+      console.error(error);
+    });
   });
 }

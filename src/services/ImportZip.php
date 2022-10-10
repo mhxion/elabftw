@@ -9,81 +9,37 @@
 
 namespace Elabftw\Services;
 
+use function basename;
 use Elabftw\Elabftw\CreateUpload;
-use Elabftw\Elabftw\EntityParams;
-use Elabftw\Elabftw\FsTools;
-use Elabftw\Elabftw\TagParams;
 use Elabftw\Elabftw\Tools;
+use Elabftw\Enums\Action;
 use Elabftw\Exceptions\ImproperActionException;
-use Elabftw\Models\AbstractEntity;
 use Elabftw\Models\Experiments;
 use Elabftw\Models\Items;
-use Elabftw\Models\Users;
-use Elabftw\Traits\EntityTrait;
-use Elabftw\Traits\UploadTrait;
+use function is_readable;
 use function json_decode;
-use League\Flysystem\FilesystemOperator;
+use League\Flysystem\UnableToReadFile;
 use function mb_strlen;
 use PDO;
-use Symfony\Component\HttpFoundation\File\UploadedFile;
-use ZipArchive;
 
 /**
  * Import a .elabftw.zip file into the database.
  */
-class ImportZip extends AbstractImport
+class ImportZip extends AbstractImportZip
 {
-    use EntityTrait;
-    use UploadTrait;
-
-    // number of items we got into the database
-    public int $inserted = 0;
-
-    /** @var AbstractEntity $Entity instance of Entity */
-    private $Entity;
-
-    private string $tmpPath;
-
-    // the folder where we extract the zip
-    private string $tmpDir;
-
-    // experiments or items
-    private string $type = 'experiments';
-
-    public function __construct(Users $users, int $target, string $canread, string $canwrite, UploadedFile $uploadedFile, private FilesystemOperator $fs)
-    {
-        parent::__construct($users, $target, $canread, $canwrite, $uploadedFile);
-        $this->Entity = new Items($users);
-        // set up a temporary directory in the cache to extract the zip to
-        $this->tmpDir = FsTools::getUniqueString();
-        $this->tmpPath = FsTools::getCacheFolder('elab') . '/' . $this->tmpDir;
-    }
-
-    /**
-     * Cleanup: remove the temporary folder created
-     */
-    public function __destruct()
-    {
-        $this->fs->deleteDirectory($this->tmpDir);
-    }
-
     /**
      * Do the import
      * We get all the info we need from the embedded .json file
      */
     public function import(): void
     {
-        $Zip = new ZipArchive();
-        $Zip->open($this->UploadedFile->getPathname());
-        $Zip->extractTo($this->tmpPath);
-
         $file = '/.elabftw.json';
-        $content = $this->fs->read($this->tmpDir . $file);
-        $json = json_decode($content, true, 512, JSON_THROW_ON_ERROR);
-        if (isset($json[0]['team'])) {
-            $this->type = 'items';
+        try {
+            $content = $this->fs->read($this->tmpDir . $file);
+        } catch (UnableToReadFile $e) {
+            throw new ImproperActionException(sprintf(_('Error: could not read archive file properly! (missing %s)'), $file));
         }
-        $this->importAll($json);
+        $this->importAll(json_decode($content, true, 512, JSON_THROW_ON_ERROR));
     }
 
     /**
@@ -111,16 +67,16 @@ class ImportZip extends AbstractImport
         $sql = 'INSERT INTO items(team, title, date, body, userid, category, canread, canwrite, elabid, metadata)
             VALUES(:team, :title, :date, :body, :userid, :category, :canread, :canwrite, :elabid, :metadata)';
 
-        if ($this->type === 'experiments') {
+        if ($this->Entity instanceof Experiments) {
             $sql = 'INSERT into experiments(title, date, body, userid, canread, canwrite, category, elabid, metadata)
                 VALUES(:title, :date, :body, :userid, :canread, :canwrite, :category, :elabid, :metadata)';
         }
 
         // make sure there is an elabid (might not exist for items before v4.0)
-        $elabid = $item['elabid'] ?? $this->generateElabid();
+        $elabid = $item['elabid'] ?? Tools::generateElabid();
 
         $req = $this->Db->prepare($sql);
-        if ($this->type === 'items') {
+        if ($this->Entity instanceof Items) {
             $req->bindParam(':team', $this->Users->userData['team'], PDO::PARAM_INT);
         }
         $req->bindParam(':title', $item['title']);
@@ -130,12 +86,12 @@ class ImportZip extends AbstractImport
         $req->bindValue(':canwrite', $this->canwrite);
         $req->bindParam(':elabid', $elabid);
         $req->bindParam(':metadata', $item['metadata']);
-        if ($this->type === 'items') {
+        if ($this->Entity instanceof Items) {
             $req->bindParam(':userid', $this->Users->userData['userid'], PDO::PARAM_INT);
-            $req->bindParam(':category', $this->target, PDO::PARAM_INT);
+            $req->bindParam(':category', $this->targetNumber, PDO::PARAM_INT);
         } else {
+            $req->bindParam(':userid', $this->targetNumber, PDO::PARAM_INT);
             $req->bindValue(':category', $this->getDefaultStatus());
-            $req->bindParam(':userid', $this->target, PDO::PARAM_INT);
         }
 
         $this->Db->execute($req);
@@ -143,11 +99,7 @@ class ImportZip extends AbstractImport
         $newItemId = $this->Db->lastInsertId();
 
         // create necessary objects
-        if ($this->type === 'experiments') {
-            $this->Entity = new Experiments($this->Users, $newItemId);
-        } else {
-            $this->Entity->setId($newItemId);
-        }
+        $this->Entity->setId($newItemId);
 
         // add tags
         if (mb_strlen($item['tags'] ?? '') > 1) {
@@ -163,12 +115,7 @@ class ImportZip extends AbstractImport
             foreach ($item['links'] as $link) {
                 $linkText .= sprintf('<li>[%s] %s</li>', $link['name'], $link['title']);
             }
-            $params = new EntityParams($item['title'], 'title');
-            $this->Entity->update($params);
-            $params = new EntityParams($item['date'], 'date');
-            $this->Entity->update($params);
-            $params = new EntityParams($item['body'] . $header . $linkText . $end, 'body');
-            $this->Entity->update($params);
+            $this->Entity->patch(Action::Update, array('title' => $item['title'], 'date' => $item['date'], 'bodyappend' => $header . $linkText . $end));
         }
         // add steps
         if (!empty($item['steps'])) {
@@ -185,9 +132,9 @@ class ImportZip extends AbstractImport
      */
     private function tagsDbInsert($tags): void
     {
-        $tagsArr = explode('|', $tags);
+        $tagsArr = explode(self::TAGS_SEPARATOR, $tags);
         foreach ($tagsArr as $tag) {
-            $this->Entity->Tags->create(new TagParams($tag));
+            $this->Entity->Tags->postAction(Action::Create, array('tag' => $tag));
         }
     }
 
@@ -204,7 +151,7 @@ class ImportZip extends AbstractImport
                 $titlePath = Filter::forFilesystem($item['title']);
                 $shortElabid = Tools::getShortElabid($item['elabid']);
                 foreach ($item['uploads'] as $file) {
-                    if ($this->type === 'experiments') {
+                    if ($this->Entity instanceof Experiments) {
                         $filePath = $this->tmpPath . '/' .
                             $item['date'] . ' - ' . $titlePath . ' - ' . $shortElabid . '/' . $file['real_name'];
                     } else {

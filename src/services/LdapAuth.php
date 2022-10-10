@@ -41,7 +41,7 @@ class LdapAuth implements AuthInterface
         $query = $this->connection->query()->setDn($this->configArr['ldap_base_dn']);
         try {
             $record = $query->findbyOrFail('mail', $this->email);
-        } catch (ObjectNotFoundException $e) {
+        } catch (ObjectNotFoundException) {
             throw new InvalidCredentialsException(0);
         }
         $dn = $record['distinguishedname'] ?? $record['dn'];
@@ -72,6 +72,17 @@ class LdapAuth implements AuthInterface
                 $teamId = (int) $this->configArr['saml_team_default'];
                 if ($teamId === 0) {
                     throw new ImproperActionException('Could not find team ID to assign user!');
+                }
+                // this setting is when we want to allow the user to make team selection
+                if ($teamId === -1) {
+                    $this->AuthResponse->userid = 0;
+                    $this->AuthResponse->initTeamRequired = true;
+                    $this->AuthResponse->initTeamUserInfo = array(
+                        'email' => $this->email,
+                        'firstname' => $firstname,
+                        'lastname' => $lastname,
+                    );
+                    return $this->AuthResponse;
                 }
                 $teamFromLdap = array($teamId);
             // it is found and it is a string

@@ -16,14 +16,16 @@ interface EditorInterface {
   init(): void;
   getContent(): string;
   setContent(content: string): void;
+  switch(): string;
   replaceContent(content: string): void;
-  switch(): void;
 }
 
 class Editor {
   type: string;
-  switch(): void {
-    insertParamAndReload('editor', this.type === 'tiny' ? 'md' : 'tiny');
+  switch(): string {
+    const target = this.type === 'tiny' ? 'md' : 'tiny';
+    insertParamAndReload('editor', target);
+    return target;
   }
 }
 

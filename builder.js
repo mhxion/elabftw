@@ -12,7 +12,6 @@
  * doing autocompletion.
  */
 const path = require('path');
-const webpack = require('webpack');
 const MiniCssExtractPlugin = require('mini-css-extract-plugin');
 const CssMinimizerPlugin = require('css-minimizer-webpack-plugin');
 const TerserPlugin = require('terser-webpack-plugin');
@@ -40,7 +39,6 @@ module.exports = {
       'bootstrap/js/src/button.js',
       'bootstrap/js/src/collapse.js',
       'bootstrap/js/src/dropdown.js',
-      './src/ts/fontawesome.ts',
       './src/ts/mathjax.ts',
       'prismjs',
       // see list in tinymce.ts for codesample plugin settings
@@ -63,15 +61,11 @@ module.exports = {
       'prismjs/components/prism-ruby.js',
     ],
     jslibs: [
-      './src/js/vendor/cornify.js',
       './src/js/vendor/jquery.rating.js',
       './src/js/vendor/keymaster.js',
     ],
     '3Dmol-notrack': [
       './src/ts/3Dmol-notrack.ts',
-    ],
-    'chemdoodle-canvas': [
-      './src/js/chemdoodle-canvas.js',
     ],
   },
   // uncomment this to find where the error is coming from

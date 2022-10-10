@@ -33,7 +33,7 @@ CREATE TABLE `api_keys` (
   `name` varchar(255) NOT NULL,
   `hash` varchar(255) NOT NULL,
   `created_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  `can_write` tinyint(1) UNSIGNED NOT NULL DEFAULT 0,
+  `can_write` tinyint UNSIGNED NOT NULL DEFAULT 0,
   `userid` int(10) UNSIGNED NOT NULL,
   `team` int(10) UNSIGNED NOT NULL,
   PRIMARY KEY (`id`)
@@ -79,8 +79,6 @@ CREATE TABLE `config` (
 
 --
 -- Table structure for table `experiments`
--- Here the datetime column cannot have current_timestamp on update because
--- of the way the code is in MySQL. It is fixed in 5.6 but we still target 5.5
 --
 
 CREATE TABLE `experiments` (
@@ -89,20 +87,20 @@ CREATE TABLE `experiments` (
   `date` date NOT NULL,
   `body` mediumtext,
   `category` int(255) UNSIGNED NOT NULL,
-  `rating` tinyint(10) UNSIGNED NOT NULL DEFAULT '0',
+  `rating` tinyint UNSIGNED NOT NULL DEFAULT 0,
   `userid` int(10) UNSIGNED NOT NULL,
   `elabid` varchar(255) NOT NULL,
-  `locked` tinyint(1) UNSIGNED NOT NULL DEFAULT '0',
+  `locked` tinyint UNSIGNED NOT NULL DEFAULT 0,
   `lockedby` int(10) UNSIGNED DEFAULT NULL,
   `lockedwhen` timestamp NULL DEFAULT NULL,
-  `timestamped` tinyint(1) UNSIGNED NOT NULL DEFAULT '0',
+  `timestamped` tinyint UNSIGNED NOT NULL DEFAULT 0,
   `timestampedby` int(11) NULL DEFAULT NULL,
-  `timestamptoken` text,
   `timestampedwhen` timestamp NULL DEFAULT NULL,
   `canread` varchar(255) NOT NULL DEFAULT 'team',
   `canwrite` varchar(255) NOT NULL DEFAULT 'user',
-  `datetime` timestamp NULL DEFAULT NULL,
-  `lastchange` timestamp NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  `content_type` tinyint NOT NULL DEFAULT 1,
+  `created_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `modified_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   `lastchangeby` int(10) UNSIGNED NULL DEFAULT NULL,
   `metadata` json NULL DEFAULT NULL,
   `state` int(10) UNSIGNED NOT NULL DEFAULT 1,
@@ -125,7 +123,8 @@ CREATE TABLE `experiments` (
 
 CREATE TABLE `experiments_comments` (
   `id` int(10) UNSIGNED NOT NULL AUTO_INCREMENT,
-  `datetime` datetime NOT NULL,
+  `created_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `modified_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   `item_id` int(10) UNSIGNED NOT NULL,
   `comment` text NOT NULL,
   `userid` int(10) UNSIGNED NOT NULL,
@@ -170,6 +169,7 @@ CREATE TABLE `experiments_revisions` (
   `id` int(10) UNSIGNED NOT NULL AUTO_INCREMENT,
   `item_id` int(10) UNSIGNED NOT NULL,
   `body` mediumtext NOT NULL,
+  `content_type` tinyint NOT NULL DEFAULT 1,
   `savedate` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
   `userid` int(10) UNSIGNED NOT NULL,
   `metadata` json NULL DEFAULT NULL,
@@ -195,10 +195,10 @@ CREATE TABLE `experiments_steps` (
   `item_id` int(10) UNSIGNED NOT NULL,
   `body` text NOT NULL,
   `ordering` int(10) UNSIGNED DEFAULT NULL,
-  `finished` tinyint(1) UNSIGNED NOT NULL DEFAULT '0',
+  `finished` tinyint UNSIGNED NOT NULL DEFAULT 0,
   `finished_time` datetime DEFAULT NULL,
   `deadline` datetime DEFAULT NULL,
-  `deadline_notif` tinyint(1) UNSIGNED NOT NULL DEFAULT '0',
+  `deadline_notif` tinyint UNSIGNED NOT NULL DEFAULT 0,
   PRIMARY KEY (`id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE utf8mb4_0900_ai_ci;
 
@@ -219,15 +219,16 @@ CREATE TABLE `experiments_templates` (
   `team` int(10) UNSIGNED DEFAULT NULL,
   `body` text,
   `title` varchar(255) NOT NULL,
-  `created_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
   `userid` int(10) UNSIGNED DEFAULT NULL,
-  `locked` tinyint(3) UNSIGNED DEFAULT NULL,
+  `locked` tinyint UNSIGNED DEFAULT NULL,
   `lockedby` int(10) UNSIGNED DEFAULT NULL,
   `lockedwhen` timestamp NULL DEFAULT NULL,
   `canread` varchar(255) NOT NULL,
   `canwrite` varchar(255) NOT NULL,
+  `content_type` tinyint NOT NULL DEFAULT 1,
   `ordering` int(10) UNSIGNED DEFAULT NULL,
-  `lastchange` timestamp NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  `created_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `modified_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   `lastchangeby` int(10) UNSIGNED NULL DEFAULT NULL,
   `metadata` json NULL DEFAULT NULL,
   `state` int(10) UNSIGNED NOT NULL DEFAULT 1,
@@ -252,6 +253,7 @@ CREATE TABLE `experiments_templates_revisions` (
   `id` int(10) UNSIGNED NOT NULL AUTO_INCREMENT,
   `item_id` int(10) UNSIGNED NOT NULL,
   `body` mediumtext NOT NULL,
+  `content_type` tinyint NOT NULL DEFAULT 1,
   `savedate` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
   `userid` int(10) UNSIGNED NOT NULL,
   PRIMARY KEY (`id`)
@@ -282,10 +284,10 @@ CREATE TABLE `favtags2users` (
 --
 
 CREATE TABLE `groups` (
-  `id` tinyint(1) UNSIGNED NOT NULL AUTO_INCREMENT,
+  `id` tinyint UNSIGNED NOT NULL AUTO_INCREMENT,
   `name` varchar(255) NOT NULL,
-  `is_sysadmin` tinyint(1) UNSIGNED NOT NULL,
-  `is_admin` tinyint(1) UNSIGNED NOT NULL,
+  `is_sysadmin` tinyint UNSIGNED NOT NULL,
+  `is_admin` tinyint UNSIGNED NOT NULL,
   PRIMARY KEY (`id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE utf8mb4_0900_ai_ci;
 
@@ -318,7 +320,7 @@ CREATE TABLE `idps` (
   `slo_binding` varchar(255) NOT NULL,
   `x509` text NOT NULL,
   `x509_new` text NOT NULL,
-  `active` tinyint(1) UNSIGNED NOT NULL DEFAULT '0',
+  `active` tinyint UNSIGNED NOT NULL DEFAULT 0,
   `email_attr` varchar(255) NOT NULL,
   `team_attr` varchar(255) NULL DEFAULT NULL,
   `fname_attr` varchar(255) NULL DEFAULT NULL,
@@ -340,19 +342,21 @@ CREATE TABLE `items` (
   `id` int(10) UNSIGNED NOT NULL AUTO_INCREMENT,
   `team` int(10) UNSIGNED NOT NULL,
   `title` varchar(255) DEFAULT NULL,
+  `created_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
   `date` date NOT NULL,
   `body` mediumtext,
   `elabid` varchar(255) NOT NULL,
-  `rating` tinyint(10) UNSIGNED NOT NULL DEFAULT '0',
+  `rating` tinyint UNSIGNED NOT NULL DEFAULT 0,
   `category` int(255) UNSIGNED NOT NULL,
-  `locked` tinyint(3) UNSIGNED DEFAULT NULL,
+  `locked` tinyint UNSIGNED DEFAULT NULL,
   `lockedby` int(10) UNSIGNED DEFAULT NULL,
   `lockedwhen` timestamp NULL DEFAULT NULL,
   `userid` int(10) UNSIGNED NOT NULL,
   `canread` varchar(255) NOT NULL DEFAULT 'team',
   `canwrite` varchar(255) NOT NULL DEFAULT 'team',
-  `available` tinyint(1) UNSIGNED NOT NULL DEFAULT '1',
-  `lastchange` timestamp NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  `content_type` tinyint NOT NULL DEFAULT 1,
+  `available` tinyint UNSIGNED NOT NULL DEFAULT 1,
+  `modified_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   `lastchangeby` int(10) UNSIGNED NULL DEFAULT NULL,
   `metadata` json NULL DEFAULT NULL,
   `state` int(10) UNSIGNED NOT NULL DEFAULT 1,
@@ -377,7 +381,8 @@ CREATE TABLE `items` (
 
 CREATE TABLE `items_comments` (
   `id` int(10) UNSIGNED NOT NULL AUTO_INCREMENT,
-  `datetime` datetime NOT NULL,
+  `created_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `modified_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   `item_id` int(10) UNSIGNED NOT NULL,
   `comment` text NOT NULL,
   `userid` int(10) UNSIGNED NOT NULL,
@@ -402,6 +407,7 @@ CREATE TABLE `items_revisions` (
   `id` int(10) UNSIGNED NOT NULL AUTO_INCREMENT,
   `item_id` int(10) UNSIGNED NOT NULL,
   `body` mediumtext NOT NULL,
+  `content_type` tinyint NOT NULL DEFAULT 1,
   `savedate` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
   `userid` int(10) UNSIGNED NOT NULL,
   PRIMARY KEY (`id`)
@@ -420,15 +426,16 @@ CREATE TABLE `items_revisions` (
 CREATE TABLE `items_types` (
   `id` int(10) UNSIGNED NOT NULL AUTO_INCREMENT,
   `team` int(10) UNSIGNED NOT NULL,
-  `name` varchar(255) NOT NULL,
+  `title` varchar(255) NOT NULL,
   `created_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
   `color` varchar(6) DEFAULT '29aeb9',
   `body` text NULL DEFAULT NULL,
   `ordering` int(10) UNSIGNED DEFAULT NULL,
-  `bookable` tinyint(1) UNSIGNED DEFAULT '0',
+  `content_type` tinyint NOT NULL DEFAULT 1,
+  `bookable` tinyint UNSIGNED DEFAULT 0,
   `canread` varchar(255) NOT NULL DEFAULT 'team',
   `canwrite` varchar(255) NOT NULL DEFAULT 'team',
-  `lastchange` timestamp NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  `modified_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   `lastchangeby` int(10) UNSIGNED NULL DEFAULT NULL,
   `metadata` json NULL DEFAULT NULL,
   `state` int(10) UNSIGNED NOT NULL DEFAULT 1,
@@ -462,10 +469,10 @@ CREATE TABLE `items_types_steps` (
   `item_id` int UNSIGNED NOT NULL,
   `body` text NOT NULL,
   `ordering` int UNSIGNED DEFAULT NULL,
-  `finished` tinyint(1) NOT NULL DEFAULT '0',
+  `finished` tinyint NOT NULL DEFAULT 0,
   `finished_time` datetime DEFAULT NULL,
   `deadline` datetime DEFAULT NULL,
-  `deadline_notif` tinyint(1) UNSIGNED NOT NULL DEFAULT '0',
+  `deadline_notif` tinyint UNSIGNED NOT NULL DEFAULT 0,
   PRIMARY KEY (`id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE utf8mb4_0900_ai_ci;
 
@@ -490,26 +497,45 @@ CREATE TABLE `notifications` (
   `userid` int(10) UNSIGNED NOT NULL,
   `category` int(10) UNSIGNED NOT NULL,
   `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  `send_email` tinyint(1) NOT NULL DEFAULT '0',
-  `email_sent` tinyint(1) NOT NULL DEFAULT '0',
+  `send_email` tinyint NOT NULL DEFAULT 0,
+  `email_sent` tinyint NOT NULL DEFAULT 0,
   `email_sent_at` datetime DEFAULT NULL,
-  `is_ack` tinyint(1) NOT NULL DEFAULT '0',
+  `is_ack` tinyint NOT NULL DEFAULT 0,
   `body` json DEFAULT NULL,
   PRIMARY KEY (`id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE utf8mb4_0900_ai_ci;
 
 
 --
--- Table structure for table `pin2users`
+-- Table structure for table `pin_experiments2users`
 --
 
-CREATE TABLE `pin2users` (
-  `id` int(10) UNSIGNED NOT NULL AUTO_INCREMENT,
-  `users_id` int(10) UNSIGNED NOT NULL,
-  `entity_id` int(10) UNSIGNED NOT NULL,
-  `type` varchar(255) NOT NULL,
-  PRIMARY KEY (`id`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE utf8mb4_0900_ai_ci;
+CREATE TABLE `pin_experiments2users` (
+  `users_id` int UNSIGNED NOT NULL,
+  `entity_id` int UNSIGNED NOT NULL,
+  PRIMARY KEY (`users_id`,`entity_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
+--
+-- Table structure for table `pin_experiments_templates2users`
+--
+
+CREATE TABLE `pin_experiments_templates2users` (
+  `users_id` int UNSIGNED NOT NULL,
+  `entity_id` int UNSIGNED NOT NULL,
+  PRIMARY KEY (`users_id`,`entity_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
+--
+-- Table structure for table `pin_items2users`
+--
+
+CREATE TABLE `pin_items2users` (
+  `users_id` int UNSIGNED NOT NULL,
+  `entity_id` int UNSIGNED NOT NULL,
+  PRIMARY KEY (`users_id`,`entity_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
 
 --
 -- Table structure for table `status`
@@ -518,9 +544,9 @@ CREATE TABLE `pin2users` (
 CREATE TABLE `status` (
   `id` int(10) UNSIGNED NOT NULL AUTO_INCREMENT,
   `team` int(10) UNSIGNED NOT NULL,
-  `name` text NOT NULL,
+  `title` varchar(255) NOT NULL,
   `color` varchar(6) NOT NULL,
-  `is_default` tinyint(1) UNSIGNED DEFAULT NULL,
+  `is_default` tinyint UNSIGNED DEFAULT NULL,
   `ordering` int(10) UNSIGNED DEFAULT NULL,
   PRIMARY KEY (`id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE utf8mb4_0900_ai_ci;
@@ -580,20 +606,20 @@ CREATE TABLE `teams` (
   `id` int(10) UNSIGNED NOT NULL AUTO_INCREMENT,
   `name` varchar(255) NOT NULL,
   `common_template` text,
-  `deletable_xp` tinyint(1) UNSIGNED NOT NULL DEFAULT 0,
-  `deletable_item` tinyint(1) UNSIGNED NOT NULL DEFAULT 1,
-  `user_create_tag` tinyint(1) UNSIGNED NOT NULL DEFAULT 1,
-  `force_exp_tpl` tinyint(1) UNSIGNED NOT NULL DEFAULT 0,
-  `link_name` text NOT NULL,
-  `link_href` text NOT NULL,
-  `datetime` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `deletable_xp` tinyint UNSIGNED NOT NULL DEFAULT 0,
+  `deletable_item` tinyint UNSIGNED NOT NULL DEFAULT 1,
+  `user_create_tag` tinyint UNSIGNED NOT NULL DEFAULT 1,
+  `force_exp_tpl` tinyint UNSIGNED NOT NULL DEFAULT 0,
+  `link_name` varchar(255) NOT NULL,
+  `link_href` varchar(255) NOT NULL,
+  `created_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
   `orgid` varchar(255) DEFAULT NULL,
-  `public_db` tinyint(1) UNSIGNED NOT NULL DEFAULT 0,
+  `public_db` tinyint UNSIGNED NOT NULL DEFAULT 0,
   `force_canread` varchar(255) NOT NULL DEFAULT 'team',
   `force_canwrite` varchar(255) NOT NULL DEFAULT 'user',
-  `do_force_canread` tinyint(1) UNSIGNED NOT NULL DEFAULT 0,
-  `do_force_canwrite` tinyint(1) UNSIGNED NOT NULL DEFAULT 0,
-  `visible` tinyint(1) UNSIGNED NOT NULL DEFAULT 1,
+  `do_force_canread` tinyint UNSIGNED NOT NULL DEFAULT 0,
+  `do_force_canwrite` tinyint UNSIGNED NOT NULL DEFAULT 0,
+  `visible` tinyint UNSIGNED NOT NULL DEFAULT 1,
   PRIMARY KEY (`id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE utf8mb4_0900_ai_ci;
 
@@ -678,7 +704,7 @@ CREATE TABLE `uploads` (
   `id` int(10) UNSIGNED NOT NULL AUTO_INCREMENT,
   `real_name` text NOT NULL,
   `long_name` text NOT NULL,
-  `comment` text NOT NULL,
+  `comment` text NULL DEFAULT NULL,
   `item_id` int(10) UNSIGNED DEFAULT NULL,
   `userid` text NOT NULL,
   `type` varchar(255) NOT NULL,
@@ -688,6 +714,7 @@ CREATE TABLE `uploads` (
   `storage` int(10) UNSIGNED NOT NULL DEFAULT 1,
   `filesize` int(10) UNSIGNED NULL DEFAULT NULL,
   `state` int(10) UNSIGNED NOT NULL DEFAULT 1,
+  `immutable` tinyint UNSIGNED NOT NULL DEFAULT 1,
   PRIMARY KEY (`id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE utf8mb4_0900_ai_ci;
 
@@ -707,57 +734,55 @@ CREATE TABLE `users` (
   `password` varchar(255) NULL DEFAULT NULL,
   `password_hash` varchar(255) NULL DEFAULT NULL,
   `mfa_secret` varchar(32) DEFAULT NULL,
-  `usergroup` tinyint(1) UNSIGNED NOT NULL,
+  `usergroup` tinyint UNSIGNED NOT NULL,
   `firstname` varchar(255) NOT NULL,
   `lastname` varchar(255) NOT NULL,
   `email` varchar(255) NOT NULL,
-  `phone` varchar(127) DEFAULT NULL,
-  `cellphone` varchar(127) DEFAULT NULL,
-  `skype` varchar(255) DEFAULT NULL,
-  `website` varchar(255) DEFAULT NULL,
+  `orcid` varchar(19) DEFAULT NULL,
   `register_date` bigint(20) UNSIGNED NOT NULL,
   `token` varchar(255) DEFAULT NULL,
-  `limit_nb` tinyint(255) UNSIGNED NOT NULL DEFAULT '15',
+  `limit_nb` tinyint UNSIGNED NOT NULL DEFAULT 15,
   `sc_create` varchar(1) NOT NULL DEFAULT 'c',
   `sc_edit` varchar(1) NOT NULL DEFAULT 'e',
   `sc_submit` varchar(1) NOT NULL DEFAULT 's',
   `sc_todo` varchar(1) NOT NULL DEFAULT 't',
-  `show_team` tinyint(1) UNSIGNED NOT NULL DEFAULT '1',
-  `show_team_templates` tinyint(1) UNSIGNED NOT NULL DEFAULT '0',
-  `show_public` tinyint(1) UNSIGNED NOT NULL DEFAULT '0',
-  `use_isodate` tinyint(1) UNSIGNED NOT NULL DEFAULT '0',
-  `uploads_layout` tinyint(1) UNSIGNED NOT NULL DEFAULT '1',
-  `chem_editor` tinyint(1) UNSIGNED NOT NULL DEFAULT '0',
-  `validated` tinyint(1) UNSIGNED NOT NULL DEFAULT '0',
+  `show_team` tinyint UNSIGNED NOT NULL DEFAULT 1,
+  `show_team_templates` tinyint UNSIGNED NOT NULL DEFAULT 0,
+  `show_public` tinyint UNSIGNED NOT NULL DEFAULT 0,
+  `use_isodate` tinyint UNSIGNED NOT NULL DEFAULT 0,
+  `uploads_layout` tinyint UNSIGNED NOT NULL DEFAULT 1,
+  `validated` tinyint UNSIGNED NOT NULL DEFAULT 0,
   `lang` varchar(5) NOT NULL DEFAULT 'en_GB',
   `default_read` varchar(255) NULL DEFAULT 'team',
   `default_write` varchar(255) NULL DEFAULT 'user',
-  `single_column_layout` tinyint(1) UNSIGNED NOT NULL DEFAULT '0',
-  `cjk_fonts` tinyint(1) UNSIGNED NOT NULL DEFAULT '0',
+  `single_column_layout` tinyint UNSIGNED NOT NULL DEFAULT 0,
+  `cjk_fonts` tinyint UNSIGNED NOT NULL DEFAULT 0,
   `orderby` varchar(255) NOT NULL DEFAULT 'date',
   `sort` varchar(255) NOT NULL DEFAULT 'desc',
-  `use_markdown` tinyint(1) UNSIGNED NOT NULL DEFAULT '0',
-  `inc_files_pdf` tinyint(1) UNSIGNED NOT NULL DEFAULT '1',
-  `append_pdfs` tinyint(1) UNSIGNED NOT NULL DEFAULT '0',
-  `archived` tinyint(1) UNSIGNED NOT NULL DEFAULT '0',
-  `pdfa` tinyint(1) UNSIGNED NOT NULL DEFAULT '0',
+  `use_markdown` tinyint UNSIGNED NOT NULL DEFAULT 0,
+  `pdf_sig` tinyint UNSIGNED NOT NULL DEFAULT 0,
+  `inc_files_pdf` tinyint UNSIGNED NOT NULL DEFAULT 1,
+  `append_pdfs` tinyint UNSIGNED NOT NULL DEFAULT 0,
+  `archived` tinyint UNSIGNED NOT NULL DEFAULT 0,
+  `pdfa` tinyint UNSIGNED NOT NULL DEFAULT 0,
   `pdf_format` varchar(255) NOT NULL DEFAULT 'A4',
   `display_size` varchar(2) NOT NULL DEFAULT 'lg',
   `display_mode` VARCHAR(2) NOT NULL DEFAULT 'it',
   `last_login` DATETIME NULL DEFAULT NULL,
-  `allow_untrusted` tinyint(1) UNSIGNED NOT NULL DEFAULT '1',
-  `notif_comment_created` tinyint(1) UNSIGNED NOT NULL DEFAULT '1',
-  `notif_comment_created_email` tinyint(1) UNSIGNED NOT NULL DEFAULT '1',
-  `notif_user_created` tinyint(1) UNSIGNED NOT NULL DEFAULT '1',
-  `notif_user_created_email` tinyint(1) UNSIGNED NOT NULL DEFAULT '1',
-  `notif_user_need_validation` tinyint(1) UNSIGNED NOT NULL DEFAULT '1',
-  `notif_user_need_validation_email` tinyint(1) UNSIGNED NOT NULL DEFAULT '1',
-  `notif_step_deadline` tinyint(1) UNSIGNED NOT NULL DEFAULT '1',
-  `notif_step_deadline_email` tinyint(1) UNSIGNED NOT NULL DEFAULT '1',
-  `notif_event_deleted` tinyint(1) UNSIGNED NOT NULL DEFAULT '1',
-  `notif_event_deleted_email` tinyint(1) UNSIGNED NOT NULL DEFAULT '1',
+  `allow_untrusted` tinyint UNSIGNED NOT NULL DEFAULT 1,
+  `notif_comment_created` tinyint UNSIGNED NOT NULL DEFAULT 1,
+  `notif_comment_created_email` tinyint UNSIGNED NOT NULL DEFAULT 1,
+  `notif_user_created` tinyint UNSIGNED NOT NULL DEFAULT 1,
+  `notif_user_created_email` tinyint UNSIGNED NOT NULL DEFAULT 1,
+  `notif_user_need_validation` tinyint UNSIGNED NOT NULL DEFAULT 1,
+  `notif_user_need_validation_email` tinyint UNSIGNED NOT NULL DEFAULT 1,
+  `notif_step_deadline` tinyint UNSIGNED NOT NULL DEFAULT 1,
+  `notif_step_deadline_email` tinyint UNSIGNED NOT NULL DEFAULT 1,
+  `notif_event_deleted` tinyint UNSIGNED NOT NULL DEFAULT 1,
+  `notif_event_deleted_email` tinyint UNSIGNED NOT NULL DEFAULT 1,
   `auth_lock_time` datetime DEFAULT NULL,
-  `auth_service` tinyint(1) UNSIGNED NULL DEFAULT NULL,
+  `auth_service` tinyint UNSIGNED NULL DEFAULT NULL,
+  `valid_until` date NULL DEFAULT NULL,
   PRIMARY KEY (`userid`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE utf8mb4_0900_ai_ci;
 
@@ -786,6 +811,12 @@ CREATE TABLE `users2team_groups` (
 --       `users` -> `userid`
 --
 
+-- --------------------------------------------------------
+
+--
+-- Table structure for table `users2teams`
+--
+
 CREATE TABLE `users2teams` (
   `users_id` int(10) UNSIGNED NOT NULL,
   `teams_id` int(10) UNSIGNED NOT NULL,
@@ -799,9 +830,46 @@ CREATE TABLE `users2teams` (
 --       `users` -> `userid`
 --
 
+-- --------------------------------------------------------
+
 --
--- Indexes for dumped tables
+-- Table structure for table `experiments2experiments`
 --
+
+CREATE TABLE `experiments2experiments` (
+  `item_id` int UNSIGNED NOT NULL,
+  `link_id` int UNSIGNED NOT NULL,
+  PRIMARY KEY (`item_id`, `link_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
+--
+-- RELATIONSHIPS FOR TABLE `experiments2experiments`:
+--   `item_id`
+--       `experiments` -> `id`
+--   `link_id`
+--       `experiments` -> `id`
+--
+
+-- --------------------------------------------------------
+
+--
+-- Table structure for table `items2experiments`
+--
+CREATE TABLE `items2experiments` (
+  `item_id` int UNSIGNED NOT NULL,
+  `link_id` int UNSIGNED NOT NULL,
+  PRIMARY KEY (`item_id`, `link_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
+--
+-- RELATIONSHIPS FOR TABLE `items2experiments`:
+--   `item_id`
+--       `items` -> `id`
+--   `link_id`
+--       `experiments` -> `id`
+--
+
+-- --------------------------------------------------------
 
 --
 -- Indexes for table `api_keys`
@@ -932,9 +1000,18 @@ ALTER TABLE `users`
   ADD KEY `fk_users_groups_id` (`usergroup`);
 
 --
--- Constraints for dumped tables
+-- Indexes for table `experiments2experiments`
 --
+ALTER TABLE `experiments2experiments`
+  ADD KEY `fk_experiments2experiments_item_id` (`item_id`),
+  ADD KEY `fk_experiments2experiments_link_id` (`link_id`);
 
+--
+-- Indexes for table `items2experiments`
+--
+ALTER TABLE `items2experiments`
+  ADD KEY `fk_items2experiments_item_id` (`item_id`),
+  ADD KEY `fk_items2experiments_link_id` (`link_id`);
 --
 -- Constraints for table `api_keys`
 --
@@ -1081,10 +1158,10 @@ CREATE TABLE `items_steps` (
     `item_id` int(10) unsigned NOT NULL,
     `body` text NOT NULL,
     `ordering` int(10) unsigned DEFAULT NULL,
-    `finished` tinyint(1) UNSIGNED NOT NULL DEFAULT '0',
+    `finished` tinyint UNSIGNED NOT NULL DEFAULT 0,
     `finished_time` datetime DEFAULT NULL,
     `deadline` datetime DEFAULT NULL,
-    `deadline_notif` tinyint(1) UNSIGNED NOT NULL DEFAULT '0',
+    `deadline_notif` tinyint UNSIGNED NOT NULL DEFAULT 0,
     PRIMARY KEY (`id`),
     KEY `fk_items_steps_items_id` (`item_id`),
     CONSTRAINT `fk_items_steps_items_id` FOREIGN KEY (`item_id`) REFERENCES `items` (`id`) ON DELETE CASCADE ON UPDATE CASCADE
@@ -1095,10 +1172,10 @@ CREATE TABLE `experiments_templates_steps` (
     `item_id` int(10) unsigned NOT NULL,
     `body` text NOT NULL,
     `ordering` int(10) unsigned DEFAULT NULL,
-    `finished` tinyint(1) UNSIGNED NOT NULL DEFAULT '0',
+    `finished` tinyint UNSIGNED NOT NULL DEFAULT 0,
     `finished_time` datetime DEFAULT NULL,
     `deadline` datetime DEFAULT NULL,
-    `deadline_notif` tinyint(1) UNSIGNED NOT NULL DEFAULT '0',
+    `deadline_notif` tinyint UNSIGNED NOT NULL DEFAULT 0,
     PRIMARY KEY (`id`),
     KEY `fk_experiments_templates_steps_items_id` (`item_id`),
     CONSTRAINT `fk_experiments_templates_steps_items_id` FOREIGN KEY (`item_id`) REFERENCES `experiments_templates` (`id`) ON DELETE CASCADE ON UPDATE CASCADE
@@ -1145,22 +1222,74 @@ ALTER TABLE `users2team_groups`
   ADD CONSTRAINT `fk_users2team_groups_userid` FOREIGN KEY (`userid`) REFERENCES `users` (`userid`) ON DELETE CASCADE ON UPDATE CASCADE;
 
 --
--- Indexes for table `pin2users`
---
-ALTER TABLE `pin2users`
-  ADD KEY `fk_pin2users_userid` (`users_id`);
-
---
--- Constraints for table `pin2users`
---
-ALTER TABLE `pin2users`
-  ADD CONSTRAINT `fk_pin2users_userid` FOREIGN KEY (`users_id`) REFERENCES `users` (`userid`) ON DELETE CASCADE ON UPDATE CASCADE;
-
---
 -- Constraints for table `users`
 --
 ALTER TABLE `users`
   ADD CONSTRAINT `fk_users_groups_id` FOREIGN KEY (`usergroup`) REFERENCES `groups` (`id`) ON DELETE CASCADE ON UPDATE CASCADE;
+
+--
+-- Constraints for table `experiments2experiments`
+--
+ALTER TABLE `experiments2experiments`
+  ADD CONSTRAINT `fk_experiments2experiments_item_id`
+    FOREIGN KEY (`item_id`) REFERENCES `experiments` (`id`)
+    ON DELETE CASCADE ON UPDATE CASCADE,
+  ADD CONSTRAINT `fk_experiments2experiments_link_id`
+    FOREIGN KEY (`link_id`) REFERENCES `experiments` (`id`)
+    ON DELETE CASCADE ON UPDATE CASCADE;
+
+--
+-- Constraints for table `items2experiments`
+--
+ALTER TABLE `items2experiments`
+  ADD CONSTRAINT `fk_items2experiments_item_id`
+    FOREIGN KEY (`item_id`) REFERENCES `items` (`id`)
+    ON DELETE CASCADE ON UPDATE CASCADE,
+  ADD CONSTRAINT `fk_items2experiments_link_id`
+    FOREIGN KEY (`link_id`) REFERENCES `experiments` (`id`)
+    ON DELETE CASCADE ON UPDATE CASCADE;
+
+--
+-- Constraints for table `pin_experiments_templates2users`
+--
+ALTER TABLE `pin_experiments_templates2users`
+  ADD CONSTRAINT `fk_pin_experiments_templates2experiments_templates_id` FOREIGN KEY (`entity_id`) REFERENCES `experiments_templates` (`id`) ON DELETE CASCADE ON UPDATE CASCADE,
+  ADD CONSTRAINT `fk_pin_experiments_templates2users_userid` FOREIGN KEY (`users_id`) REFERENCES `users` (`userid`) ON DELETE CASCADE ON UPDATE CASCADE;
+
+--
+-- Indexes for table `pin_experiments2users`
+--
+ALTER TABLE `pin_experiments2users`
+  ADD KEY `fk_pin_experiments2users_userid` (`users_id`),
+  ADD KEY `fk_pin_experiments2experiments_id` (`entity_id`);
+
+--
+-- Constraints for table `pin_experiments2users`
+--
+ALTER TABLE `pin_experiments2users`
+  ADD CONSTRAINT `fk_pin_experiments2experiments_id` FOREIGN KEY (`entity_id`) REFERENCES `experiments` (`id`) ON DELETE CASCADE ON UPDATE CASCADE,
+  ADD CONSTRAINT `fk_pin_experiments2users_userid` FOREIGN KEY (`users_id`) REFERENCES `users` (`userid`) ON DELETE CASCADE ON UPDATE CASCADE;
+
+--
+-- Indexes for table `pin_experiments_templates2users`
+--
+ALTER TABLE `pin_experiments_templates2users`
+  ADD KEY `fk_pin_experiments_templates2users_userid` (`users_id`),
+  ADD KEY `fk_pin_experiments_templates2experiments_templates_id` (`entity_id`);
+
+--
+-- Indexes for table `pin_items2users`
+--
+ALTER TABLE `pin_items2users`
+  ADD KEY `fk_pin_items2users_userid` (`users_id`),
+  ADD KEY `fk_pin_items2items_id` (`entity_id`);
+
+--
+-- Constraints for table `pin_items2users`
+--
+ALTER TABLE `pin_items2users`
+  ADD CONSTRAINT `fk_pin_items2items_id` FOREIGN KEY (`entity_id`) REFERENCES `items` (`id`) ON DELETE CASCADE ON UPDATE CASCADE,
+  ADD CONSTRAINT `fk_pin_items2users_userid` FOREIGN KEY (`users_id`) REFERENCES `users` (`userid`) ON DELETE CASCADE ON UPDATE CASCADE;
 
 COMMIT;
 

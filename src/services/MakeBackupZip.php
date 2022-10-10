@@ -35,7 +35,7 @@ class MakeBackupZip extends AbstractMakeZip
      * Loop on each id and add it to our zip archive
      * This could be called the main function.
      */
-    public function getZip(): void
+    public function getStreamZip(): void
     {
         // loop on every user
         $usersArr = $this->Entity->Users->readFromQuery('');
@@ -58,8 +58,7 @@ class MakeBackupZip extends AbstractMakeZip
         // we're making a backup so ignore permissions access
         $this->Entity->bypassReadPermission = true;
         $this->Entity->setId($id);
-        $this->Entity->populate();
-        $uploadedFilesArr = $this->Entity->Uploads->readAllNormal();
+        $uploadedFilesArr = $this->Entity->entityData['uploads'];
         $this->folder = Filter::forFilesystem($fullname) . '/' . $this->getBaseFileName();
 
         if (!empty($uploadedFilesArr)) {

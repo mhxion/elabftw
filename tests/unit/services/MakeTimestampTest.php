@@ -11,9 +11,9 @@ namespace Elabftw\Services;
 
 use Defuse\Crypto\Crypto;
 use Defuse\Crypto\Key;
-use Elabftw\Elabftw\EntityParams;
 use Elabftw\Elabftw\TimestampResponse;
 use Elabftw\Exceptions\ImproperActionException;
+use Elabftw\Factories\StorageFactory;
 use Elabftw\Models\Experiments;
 use Elabftw\Models\Users;
 use GuzzleHttp\Client;
@@ -177,7 +177,7 @@ class MakeTimestampTest extends \PHPUnit\Framework\TestCase
     {
         $Entity = new Experiments(new Users(1, 1));
         // create a new experiment for timestamping tests
-        $Entity->setId($Entity->create(new EntityParams('ts test')));
+        $Entity->setId($Entity->create());
         return $Entity;
     }
 }

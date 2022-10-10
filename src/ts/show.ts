@@ -11,10 +11,7 @@ import 'bootstrap/js/src/modal.js';
 import i18next from 'i18next';
 import EntityClass from './Entity.class';
 import FavTag from './FavTag.class';
-import { MathJaxObject } from 'mathjax-full/js/components/startup';
-declare const MathJax: MathJaxObject;
-import { PartialEntity, Payload, Method, Action, EntityType, Target } from './interfaces';
-import { Ajax } from './Ajax.class';
+import { Api } from './Apiv2.class';
 
 document.addEventListener('DOMContentLoaded', () => {
   if (!document.getElementById('info')) {
@@ -31,33 +28,38 @@ document.addEventListener('DOMContentLoaded', () => {
   const limit = parseInt(about.limit, 10);
   const EntityC = new EntityClass(entity.type);
   const FavTagC = new FavTag();
+  const ApiC = new Api();
 
   // CREATE EXPERIMENT or DATABASE item with shortcut
   key(document.getElementById('shortcuts').dataset.create, function() {
-    if (about.type === 'experiments' && window.location.pathname !== '/search.php') {
+    if (about.type === 'experiments') {
       const el = document.querySelector('[data-action="create-entity"]') as HTMLButtonElement;
       const tplid = el.dataset.tplid;
       const urlParams = new URLSearchParams(document.location.search);
       const tags = urlParams.getAll('tags[]');
-      EntityC.create(tplid, tags).then(json => {
-        if (json.res) {
-          window.location.replace(`?mode=edit&id=${json.value}`);
-        } else {
-          notif(json);
-        }
-      });
+      EntityC.create(tplid, tags).then(resp => window.location.href = resp.headers.get('location'));
     } else {
       // for database items, show a selection modal
       // modal plugin requires jquery
-      ($('#createModal') as JQuery).modal('toggle');
+      $('#createModal').modal('toggle');
     }
   });
 
   // validate the form upon change. fix #451
   // add to the input itself, not the form for more flexibility
   // for instance the tags input allow multiple selection, so we don't want to submit on change
-  $('.autosubmit').on('change', function() {
-    $(this).closest('form').submit();
+  document.querySelectorAll('.autosubmit').forEach(el => {
+    el.addEventListener('change', event => {
+      // look for all the select that have an empty value and ignore them by setting the name to empty string
+      // this is done to avoid the "extended" being repeated with the last one possibly empty taking over the first one
+      document.querySelectorAll('select.autosubmit').forEach((sel: HTMLSelectElement) => {
+        if (sel.options[sel.selectedIndex].value === '') {
+          // using empty name is better than sel.disabled to avoid visual glitch during submit
+          sel.name = '';
+        }
+      });
+      (event.currentTarget as HTMLElement).closest('form').submit();
+    });
   });
 
   // THE CHECKBOXES
@@ -117,7 +119,7 @@ document.addEventListener('DOMContentLoaded', () => {
         notif(nothingSelectedError);
         return;
       }
-      window.location.href = `make.php?what=${el.value}&type=${about.type}&id=${checked.map(value => value.id).join('+')}`;
+      window.location.href = `make.php?format=${el.value}&type=${about.type}&id=${checked.map(value => value.id).join('+')}`;
 
     // UPDATE CATEGORY
     } else if (el.matches('[data-action="update-category-selected-entities"]')) {
@@ -130,12 +132,7 @@ document.addEventListener('DOMContentLoaded', () => {
       }
       // loop on it and update the status/item type
       checked.forEach(chk => {
-        ajaxs.push($.post('app/controllers/EntityAjaxController.php', {
-          updateCategory : true,
-          id: chk.id,
-          categoryId : el.value,
-          type : about.type,
-        }));
+        ajaxs.push(ApiC.patch(`${about.type}/${chk.id}`, {'category': el.value}));
       });
       // reload the page once it's done
       // a simple reload would not work here
@@ -157,13 +154,7 @@ document.addEventListener('DOMContentLoaded', () => {
       }
       // loop on it and update the status/item type
       checked.forEach(chk => {
-        ajaxs.push($.post('app/controllers/EntityAjaxController.php', {
-          updatePermissions : true,
-          rw: 'read',
-          id: chk.id,
-          value: el.value,
-          type : about.type,
-        }));
+        ajaxs.push(ApiC.patch(`${about.type}/${chk.id}`, {'canread': el.value}));
       });
       // reload the page once it's done
       // a simple reload would not work here
@@ -223,6 +214,10 @@ document.addEventListener('DOMContentLoaded', () => {
       document.querySelectorAll('[data-action="add-tag-filter"]').forEach(el => {
         el.removeAttribute('hidden');
       });
+
+    // TOGGLE PIN
+    } else if (el.matches('[data-action="toggle-pin"]')) {
+      EntityC.pin(parseInt(el.dataset.id, 10)).then(() => el.closest('.item').remove());
 
     // toggle visibility of the trash icon for favtags
     } else if (el.matches('[data-action="toggle-favtags-edit"]')) {
@@ -345,14 +340,7 @@ document.addEventListener('DOMContentLoaded', () => {
       }
       // loop on it and timestamp it
       checked.forEach(chk => {
-        $.post('app/controllers/EntityAjaxController.php', {
-          timestamp: true,
-          type: 'experiments',
-          id: chk.id,
-        }).done(function(json) {
-          notif(json);
-          reloadEntitiesShow();
-        });
+        EntityC.timestamp(chk.id).then(() => reloadEntitiesShow());
       });
 
     // THE DELETE BUTTON FOR CHECKED BOXES
@@ -368,58 +356,7 @@ document.addEventListener('DOMContentLoaded', () => {
         return;
       }
       // loop on it and delete stuff
-      checked.forEach(chk => {
-        EntityC.destroy(chk.id).then(json => {
-          if (json.res) {
-            $('#parent_' + chk.randomid).hide(200);
-          }
-        });
-      });
-
-    } else if (el.matches('[data-action="toggle-body"]')) {
-      const randId = el.dataset.randid;
-      const plusMinusIcon = el.querySelector('[data-fa-i2svg]');
-      const bodyDiv = document.getElementById(randId);
-      let action = 'hide';
-      // transform the + in - and vice versa
-      if (bodyDiv.hasAttribute('hidden')) {
-        plusMinusIcon.classList.remove('fa-plus-circle');
-        plusMinusIcon.classList.add('fa-minus-circle');
-        action = 'show';
-      } else {
-        plusMinusIcon.classList.add('fa-plus-circle');
-        plusMinusIcon.classList.remove('fa-minus-circle');
-      }
-      // don't reload body if it is already loaded for show action
-      // and the hide action is just toggle hidden attribute and do nothing else
-      if ((action === 'show' && bodyDiv.dataset.bodyLoaded) || action === 'hide') {
-        bodyDiv.toggleAttribute('hidden');
-        return;
-      }
-
-      // prepare the get request
-      const entityType = el.dataset.type === 'experiments' ? EntityType.Experiment : EntityType.Item;
-      const payload: Payload = {
-        method: Method.GET,
-        action: Action.Read,
-        model: entityType,
-        entity: {
-          type: entityType,
-          id: parseInt(el.dataset.id, 10),
-        },
-        target: Target.Body,
-      };
-      (new Ajax()).send(payload).then(json => {
-        // add html content and adjust the width of the children
-        bodyDiv.innerHTML = (json.value as PartialEntity).body;
-        // get the width of the parent. The -30 is to make it smaller than parent even with the margins
-        const width = document.getElementById('parent_' + randId).clientWidth - 30;
-        bodyDiv.style.width = String(width);
-        bodyDiv.toggleAttribute('hidden');
-        bodyDiv.dataset.bodyLoaded = '1';
-        // ask mathjax to reparse the page
-        MathJax.typeset();
-      });
+      checked.forEach(chk => EntityC.destroy(chk.id).then(() => $('#parent_' + chk.randomid).hide(200)));
     }
   });
 
@@ -432,7 +369,7 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   // FAVTAGS PANEL
-  if (localStorage.getItem('isfavtagOpen') === '1') {
+  if (localStorage.getItem('isfavtagsOpen') === '1') {
     FavTagC.toggle();
   }
 });

@@ -1,4 +1,4 @@
-<?php
+<?php declare(strict_types=1);
 /**
  * @author Nicolas CARPi <nico-git@deltablot.email>
  * @copyright 2012 Nicolas CARPi
@@ -6,7 +6,6 @@
  * @license AGPL-3.0
  * @package elabftw
  */
-declare(strict_types=1);
 
 namespace Elabftw\Elabftw;
 
@@ -15,12 +14,11 @@ use Elabftw\Exceptions\DatabaseErrorException;
 use Elabftw\Exceptions\FilesystemErrorException;
 use Elabftw\Exceptions\IllegalActionException;
 use Elabftw\Exceptions\ImproperActionException;
-use Elabftw\Models\Experiments;
 use Elabftw\Models\ItemsTypes;
 use Elabftw\Models\Status;
-use Elabftw\Models\Tags;
 use Elabftw\Models\TeamGroups;
 use Elabftw\Models\Teams;
+use Elabftw\Models\TeamTags;
 use Elabftw\Services\UsersHelper;
 use Exception;
 use function filter_var;
@@ -28,7 +26,6 @@ use Symfony\Component\HttpFoundation\Response;
 
 /**
  * Administration panel of a team
- *
  */
 require_once 'app/init.inc.php';
 $App->pageTitle = _('Admin panel'); // @phan-suppress PhanTypeExepectedObjectPropAccessButGotNull
@@ -44,33 +41,23 @@ try {
     }
 
     $ItemsTypes = new ItemsTypes($App->Users);
-    $Status = new Status($App->Users->team);
-    $Tags = new Tags(new Experiments($App->Users));
+    $Teams = new Teams($App->Users, $App->Users->userData['team']);
+    $Status = new Status($Teams);
+    $Tags = new TeamTags($App->Users);
     $TeamGroups = new TeamGroups($App->Users);
-    $Teams = new Teams($App->Users);
 
     $itemsCategoryArr = $ItemsTypes->readAll();
-    $templateData = array();
-    $stepsArr = array();
-    $linksArr = array();
     if ($Request->query->has('templateid')) {
-        $ItemsTypes->setId((int) $App->Request->query->get('templateid'));
-        $templateData = $ItemsTypes->read(new ContentParams());
-        $permissions = $ItemsTypes->getPermissions($templateData);
-        if ($permissions['write'] === false) {
-            throw new IllegalActionException('User tried to access a template without write permissions');
-        }
-        $stepsArr = $ItemsTypes->Steps->read(new ContentParams());
-        $linksArr = $ItemsTypes->Links->read(new ContentParams());
+        $ItemsTypes->setId($App->Request->query->getInt('templateid'));
     }
     $statusArr = $Status->readAll();
-    $teamConfigArr = $Teams->read(new ContentParams());
-    $teamGroupsArr = $TeamGroups->read(new ContentParams());
+    $teamConfigArr = $Teams->readOne();
+    $teamGroupsArr = $TeamGroups->readAll();
     $teamsArr = $Teams->readAll();
     $allTeamUsersArr = $App->Users->readAllFromTeam();
     // only the unvalidated ones
     $unvalidatedUsersArr = array_filter($allTeamUsersArr, function ($u) {
-        return $u['validated'] === '0';
+        return $u['validated'] === 0;
     });
     // Users search
     $isSearching = false;
@@ -93,6 +80,7 @@ try {
 
     $template = 'admin.html';
     $renderArr = array(
+        'Entity' => $ItemsTypes,
         'allTeamUsersArr' => $allTeamUsersArr,
         'tagsArr' => $tagsArr,
         'isSearching' => $isSearching,
@@ -102,9 +90,6 @@ try {
         'teamGroupsArr' => $teamGroupsArr,
         'visibilityArr' => $TeamGroups->getVisibilityList(),
         'teamsArr' => $teamsArr,
-        'templateData' => $templateData,
-        'stepsArr' => $stepsArr,
-        'linksArr' => $linksArr,
         'unvalidatedUsersArr' => $unvalidatedUsersArr,
         'usersArr' => $usersArr,
     );

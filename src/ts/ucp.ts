@@ -5,14 +5,15 @@
  * @license AGPL-3.0
  * @package elabftw
  */
-import { notif, reloadElement } from './misc';
+import { notif, reloadElement, addAutocompleteToTagInputs, collectForm } from './misc';
 import tinymce from 'tinymce/tinymce';
 import { getTinymceBaseConfig } from './tinymce';
-import Apikey from './Apikey.class';
 import i18next from 'i18next';
-import { EntityType, Target } from './interfaces';
-import EntityClass from './Entity.class';
+import { Model, Target } from './interfaces';
+import Templates from './Templates.class';
 import Tab from './Tab.class';
+import { Ajax } from './Ajax.class';
+import { Api } from './Apiv2.class';
 
 document.addEventListener('DOMContentLoaded', () => {
   if (window.location.pathname !== '/ucp.php') {
@@ -24,8 +25,8 @@ document.addEventListener('DOMContentLoaded', () => {
     $('.sortableHandle').toggle();
   });
 
-  const ApikeyC = new Apikey();
-  const EntityC = new EntityClass(EntityType.Template);
+  const EntityC = new Templates();
+  const ApiC = new Api();
 
   const TabMenu = new Tab();
   TabMenu.init(document.querySelector('.tabbed-menu'));
@@ -38,15 +39,17 @@ document.addEventListener('DOMContentLoaded', () => {
       const title = prompt(i18next.t('template-title'));
       if (title) {
         // no body on template creation
-        EntityC.create(title, []).then(json => {
-          window.location.replace(`ucp.php?tab=3&templateid=${json.value}`);
-        });
+        EntityC.create(title).then(resp => window.location.href = resp.headers.get('location'));
       }
     // LOCK TEMPLATE
-    } else if (el.matches('[data-action="lock-template"]')) {
-      // reload the page to change the icon and make the edit button disappear (#1897)
-      const id = el.dataset.id;
-      EntityC.lock(parseInt(id)).then(() => window.location.href = `?tab=3&templateid=${id}`);
+    } else if (el.matches('[data-action="toggle-lock"]')) {
+      EntityC.lock(parseInt(el.dataset.id)).then(() => {
+        reloadElement('templatesDiv').then(() => {
+          addAutocompleteToTagInputs();
+          tinymce.remove();
+          tinymce.init(getTinymceBaseConfig('ucp'));
+        });
+      });
     // UPDATE TEMPLATE
     } else if (el.matches('[data-action="update-template"]')) {
       const id = el.dataset.id;
@@ -55,7 +58,7 @@ document.addEventListener('DOMContentLoaded', () => {
       EntityC.update(parseInt(id), Target.Body, body);
     // DOWNLOAD TEMPLATE
     } else if (el.matches('[data-action="download-template"]')) {
-      EntityC.saveToFile(parseInt(el.dataset.id), el.dataset.name);
+      window.location.href = `make.php?format=eln&type=experiments_templates&id=${el.dataset.id}`;
     // DESTROY TEMPLATE
     } else if (el.matches('[data-action="destroy-template"]')) {
       if (confirm(i18next.t('generic-delete-warning'))) {
@@ -64,9 +67,15 @@ document.addEventListener('DOMContentLoaded', () => {
           .catch((e) => notif({'res': false, 'msg': e.message}));
       }
 
+    } else if (el.matches('[data-action="patch-account"]')) {
+      const params = collectForm(document.getElementById('ucp-account-form'));
+      if (params['orcid'] === '') {
+        delete params['orcid'];
+      }
+      ApiC.patch(`${Model.User}/me`, params);
     // CREATE API KEY
     } else if (el.matches('[data-action="create-apikey"]')) {
-      // clear any prevous new key message
+      // clear any previous new key message
       const nameInput = (document.getElementById('apikeyName') as HTMLInputElement);
       const content = nameInput.value;
       if (!content) {
@@ -75,8 +84,9 @@ document.addEventListener('DOMContentLoaded', () => {
         nameInput.style.borderColor = 'red';
         return;
       }
-      const canwrite = parseInt((document.getElementById('apikeyCanwrite') as HTMLInputElement).value);
-      ApikeyC.create(content, canwrite).then(json => {
+      const canwrite = parseInt((document.getElementById('apikeyCanwrite') as HTMLInputElement).value, 10);
+      return ApiC.post(`${Model.Apikey}`, {'name': content, 'canwrite': canwrite}).then(resp => {
+        const location = resp.headers.get('location').split('/');
         reloadElement('apiTable');
         const warningDiv = document.createElement('div');
         warningDiv.classList.add('alert', 'alert-warning');
@@ -85,7 +95,7 @@ document.addEventListener('DOMContentLoaded', () => {
         warningDiv.appendChild(chevron);
 
         const newkey = document.createElement('p');
-        newkey.innerText = json.value as string;
+        newkey.innerText = location[location.length -1];
         const warningTextSpan = document.createElement('span');
 
         warningTextSpan.innerText = i18next.t('new-apikey-warning');
@@ -99,54 +109,36 @@ document.addEventListener('DOMContentLoaded', () => {
     // DESTROY API KEY
     } else if (el.matches('[data-action="destroy-apikey"]')) {
       if (confirm(i18next.t('generic-delete-warning'))) {
-        ApikeyC.destroy(parseInt(el.dataset.apikeyid)).then(() => {
-          // only reload children of apiTable
-          reloadElement('apiTable');
-        });
+        const id = parseInt(el.dataset.apikeyid, 10);
+        return ApiC.delete(`${Model.Apikey}/${id}`).then(() => reloadElement('apiTable'));
       }
-    }
-  });
-
-  $('#import-from-file').on('click', function() {
-    document.getElementById('import_tpl').hidden = false;
-  });
-
-  // CAN READ/WRITE SELECT PERMISSION
-  $(document).on('change', '.permissionSelectTpl', function() {
-    const value = $(this).val();
-    const rw = $(this).data('rw');
-    const id = $(this).data('id');
-    $.post('app/controllers/EntityAjaxController.php', {
-      updatePermissions: true,
-      rw: rw,
-      id: id,
-      type: 'experiments_templates',
-      value: value,
-    }).done(function(json) {
-      notif(json);
-    });
-  });
-
-  // input to upload an elabftw.tpl file
-  document.getElementById('import_tpl').addEventListener('change', (event) => {
-    const el = (event.target as HTMLInputElement);
-    const title = el.value.replace('.elabftw.tpl', '').replace('C:\\fakepath\\', '');
-    if (!window.FileReader) {
-      alert('Please use a modern web browser. Import aborted.');
-      return false;
-    }
-    const file = (event.target as HTMLInputElement).files[0];
-    const reader = new FileReader();
-    reader.onload = function(event): void {
-      const body = event.target.result as string;
-      EntityC.create(title, []).then(json => {
-        const newid = parseInt(json.value as string);
-        EntityC.update(newid, Target.Body, body).then(() => {
-          window.location.replace(`ucp.php?tab=3&templateid=${json.value}`);
+    } else if (el.matches('[data-action="show-import-tpl"]')) {
+      document.getElementById('import_tpl').toggleAttribute('hidden');
+    } else if (el.matches('[data-action="toggle-pin"]')) {
+      EntityC.pin(parseInt(el.dataset.id)).then(() => {
+        reloadElement('templatesDiv').then(() => {
+          addAutocompleteToTagInputs();
+          tinymce.remove();
+          tinymce.init(getTinymceBaseConfig('ucp'));
         });
       });
+    }
+  });
+
+  // input to upload an ELN archive
+  document.getElementById('import_tpl').addEventListener('change', (event) => {
+    const el = (event.target as HTMLInputElement);
+    const AjaxC = new Ajax();
+    const params = {
+      'type': 'archive',
+      'file': el.files[0],
+      'target': 'experiments_templates:0',
+      'canread': 'team',
+      'canwrite': 'user',
     };
-    reader.readAsText(file);
+    AjaxC.postForm('app/controllers/ImportController.php', params).then(() => {
+      window.location.reload();
+    });
   });
 
   // TinyMCE

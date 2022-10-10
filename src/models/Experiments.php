@@ -9,57 +9,69 @@
 
 namespace Elabftw\Models;
 
-use Elabftw\Elabftw\ContentParams;
+use Elabftw\Elabftw\TimestampResponse;
+use Elabftw\Elabftw\Tools;
+use Elabftw\Enums\Action;
 use Elabftw\Exceptions\IllegalActionException;
 use Elabftw\Exceptions\ImproperActionException;
-use Elabftw\Interfaces\EntityParamsInterface;
-use Elabftw\Maps\Team;
+use Elabftw\Interfaces\MakeTimestampInterface;
+use Elabftw\Services\MakeBloxberg;
+use Elabftw\Services\MakeDfnTimestamp;
+use Elabftw\Services\MakeDigicertTimestamp;
+use Elabftw\Services\MakeGlobalSignTimestamp;
+use Elabftw\Services\MakeSectigoTimestamp;
+use Elabftw\Services\MakeUniversignTimestamp;
+use Elabftw\Services\MakeUniversignTimestampDev;
+use Elabftw\Services\TimestampUtils;
 use Elabftw\Traits\InsertTagsTrait;
+use GuzzleHttp\Client;
 use PDO;
 
 /**
  * All about the experiments
  */
-class Experiments extends AbstractEntity
+class Experiments extends AbstractConcreteEntity
 {
     use InsertTagsTrait;
 
     public function __construct(Users $users, ?int $id = null)
     {
+        $this->page = parent::TYPE_EXPERIMENTS;
+        $this->type = parent::TYPE_EXPERIMENTS;
         parent::__construct($users, $id);
-        $this->page = 'experiments';
-        $this->type = 'experiments';
     }
 
-    public function create(EntityParamsInterface $params): int
+    public function create(int $template = -1, array $tags = array()): int
     {
         $Templates = new Templates($this->Users);
-        $Team = new Team((int) $this->Users->userData['team']);
+        $Teams = new Teams($this->Users);
+        $teamConfigArr = $Teams->readOne();
 
+        // defaults
+        $title = _('Untitled');
+        $body = null;
+        $canread = 'team';
+        $canwrite = 'user';
         $metadata = null;
-        $tpl = (int) $params->getContent();
+
         // do we want template ?
-        if ($tpl > 0) {
-            $Templates->setId($tpl);
-            $templateArr = $Templates->read(new ContentParams());
-            $permissions = $Templates->getPermissions($templateArr);
-            if ($permissions['read'] === false) {
-                throw new IllegalActionException('User tried to access a template without read permissions');
-            }
-            $metadata = $templateArr['metadata'];
+        // $templateId can be a template id, or 0: common template, or -1: null body
+        if ($template > 0) {
+            $Templates->setId($template);
+            $templateArr = $Templates->readOne();
             $title = $templateArr['title'];
             $body = $templateArr['body'];
             $canread = $templateArr['canread'];
             $canwrite = $templateArr['canwrite'];
-        } else {
+            $metadata = $templateArr['metadata'];
+        }
+
+        if ($template === 0) {
             // no template, make sure admin didn't disallow it
-            if ($Team->getForceExpTpl() === 1) {
+            if ($teamConfigArr['force_exp_tpl'] === 1) {
                 throw new ImproperActionException(_('Experiments must use a template!'));
             }
-            $title = _('Untitled');
-            $body = $Team->getCommonTemplate();
-            $canread = 'team';
-            $canwrite = 'user';
+            $body = $teamConfigArr['common_template'];
             if ($this->Users->userData['default_read'] !== null) {
                 $canread = $this->Users->userData['default_read'];
             }
@@ -68,34 +80,40 @@ class Experiments extends AbstractEntity
             }
         }
 
+        $contentType = AbstractEntity::CONTENT_HTML;
+        if ($this->Users->userData['use_markdown']) {
+            $contentType = AbstractEntity::CONTENT_MD;
+        }
+
         // enforce the permissions if the admin has set them
-        $canread = $Team->getDoForceCanread() === 1 ? $Team->getForceCanread() : $canread;
-        $canwrite = $Team->getDoForceCanwrite() === 1 ? $Team->getForceCanwrite() : $canwrite;
+        $canread = $teamConfigArr['do_force_canread'] === 1 ? $teamConfigArr['force_canread'] : $canread;
+        $canwrite = $teamConfigArr['do_force_canwrite'] === 1 ? $teamConfigArr['force_canwrite'] : $canwrite;
 
         // SQL for create experiments
-        $sql = 'INSERT INTO experiments(title, date, body, category, elabid, canread, canwrite, datetime, metadata, userid)
-            VALUES(:title, CURDATE(), :body, :category, :elabid, :canread, :canwrite, NOW(), :metadata, :userid)';
+        $sql = 'INSERT INTO experiments(title, date, body, category, elabid, canread, canwrite, metadata, userid, content_type)
+            VALUES(:title, CURDATE(), :body, :category, :elabid, :canread, :canwrite, :metadata, :userid, :content_type)';
         $req = $this->Db->prepare($sql);
         $req->bindParam(':title', $title, PDO::PARAM_STR);
         $req->bindParam(':body', $body, PDO::PARAM_STR);
         $req->bindValue(':category', $this->getStatus(), PDO::PARAM_INT);
-        $req->bindValue(':elabid', $this->generateElabid(), PDO::PARAM_STR);
+        $req->bindValue(':elabid', Tools::generateElabid(), PDO::PARAM_STR);
         $req->bindParam(':canread', $canread, PDO::PARAM_STR);
         $req->bindParam(':canwrite', $canwrite, PDO::PARAM_STR);
         $req->bindParam(':metadata', $metadata, PDO::PARAM_STR);
         $req->bindParam(':userid', $this->Users->userData['userid'], PDO::PARAM_INT);
+        $req->bindParam(':content_type', $contentType, PDO::PARAM_INT);
         $this->Db->execute($req);
         $newId = $this->Db->lastInsertId();
 
-        // insert the tags from the template
-        if ($tpl !== 0) {
-            $this->Links->duplicate($tpl, $newId, true);
-            $this->Steps->duplicate($tpl, $newId, true);
+        // insert the tags, steps and links from the template
+        if ($template > 0) {
             $Tags = new Tags($Templates);
             $Tags->copyTags($newId, true);
+            $this->Steps->duplicate($template, $newId, true);
+            $this->ItemsLinks->duplicate($template, $newId, true);
         }
 
-        $this->insertTags($params->getTags(), $newId);
+        $this->insertTags($tags, $newId);
 
         return $newId;
     }
@@ -136,24 +154,24 @@ class Experiments extends AbstractEntity
         // capital i looks good enough
         $title = $this->entityData['title'] . ' I';
 
-        $sql = 'INSERT INTO experiments(title, date, body, category, elabid, canread, canwrite, datetime, userid, metadata)
-            VALUES(:title, CURDATE(), :body, :category, :elabid, :canread, :canwrite, NOW(), :userid, :metadata)';
+        $sql = 'INSERT INTO experiments(title, date, body, category, elabid, canread, canwrite, userid, metadata, content_type)
+            VALUES(:title, CURDATE(), :body, :category, :elabid, :canread, :canwrite, :userid, :metadata, :content_type)';
         $req = $this->Db->prepare($sql);
         $req->bindParam(':title', $title, PDO::PARAM_STR);
         $req->bindParam(':body', $this->entityData['body'], PDO::PARAM_STR);
         $req->bindValue(':category', $this->getStatus(), PDO::PARAM_INT);
-        $req->bindValue(':elabid', $this->generateElabid(), PDO::PARAM_STR);
+        $req->bindValue(':elabid', Tools::generateElabid(), PDO::PARAM_STR);
         $req->bindParam(':canread', $this->entityData['canread'], PDO::PARAM_STR);
         $req->bindParam(':canwrite', $this->entityData['canwrite'], PDO::PARAM_STR);
         $req->bindParam(':metadata', $this->entityData['metadata'], PDO::PARAM_STR);
         $req->bindParam(':userid', $this->Users->userData['userid'], PDO::PARAM_INT);
+        $req->bindParam(':content_type', $this->entityData['content_type'], PDO::PARAM_INT);
         $this->Db->execute($req);
         $newId = $this->Db->lastInsertId();
-
-        if ($this->id === null) {
-            throw new IllegalActionException('Try to duplicate without an id.');
-        }
-        $this->Links->duplicate($this->id, $newId);
+        /** @psalm-suppress PossiblyNullArgument
+         * this->id cannot be null here, checked during canOrExplode */
+        $this->ExperimentsLinks->duplicate($this->id, $newId);
+        $this->ItemsLinks->duplicate($this->id, $newId);
         $this->Steps->duplicate($this->id, $newId);
         $this->Tags->copyTags($newId);
 
@@ -165,29 +183,67 @@ class Experiments extends AbstractEntity
      */
     public function destroy(): bool
     {
+        if ($this->entityData['timestamped'] === 1) {
+            throw new IllegalActionException('User tried to delete an experiment that was timestamped.');
+        }
+        $Teams = new Teams($this->Users);
+        $teamConfigArr = $Teams->readOne();
+        $Config = Config::getConfig();
+        if ((!$teamConfigArr['deletable_xp'] && !$this->Users->userData['is_admin'])
+            || $Config->configArr['deletable_xp'] === 0) {
+            throw new ImproperActionException('You cannot delete experiments!');
+        }
         // delete from pinned too
         return parent::destroy() && $this->Pins->cleanup();
     }
 
-    /**
-     * Count the number of timestamped experiments during past month (sliding window)
-     */
-    public function getTimestampLastMonth(): int
+    public function patch(Action $action, array $params): array
     {
-        $sql = 'SELECT COUNT(id) FROM experiments WHERE timestamped = 1 AND timestampedwhen > (NOW() - INTERVAL 1 MONTH)';
-        $req = $this->Db->prepare($sql);
-        $this->Db->execute($req);
-        return (int) $req->fetchColumn();
+        $this->canOrExplode('write');
+        return match ($action) {
+            Action::Bloxberg => $this->bloxberg(),
+            Action::Timestamp => $this->timestamp(),
+            default => parent::patch($action, $params),
+        };
     }
 
-    protected function getBoundEvents(): array
+    private function bloxberg(): array
     {
-        $sql = 'SELECT team_events.* from team_events WHERE experiment = :id';
-        $req = $this->Db->prepare($sql);
-        $req->bindParam(':id', $this->id, PDO::PARAM_INT);
-        $this->Db->execute($req);
+        $Config = Config::getConfig();
+        $config = $Config->configArr;
+        if ($config['blox_enabled'] !== '1') {
+            throw new ImproperActionException('Bloxberg timestamping is disabled on this instance.');
+        }
+        (new MakeBloxberg(new Client(), $this))->timestamp();
+        return $this->readOne();
+    }
 
-        return $req->fetchAll();
+    private function getTimestampMaker(array $config): MakeTimestampInterface
+    {
+        return match ($config['ts_authority']) {
+            'dfn' => new MakeDfnTimestamp($config, $this),
+            'universign' => $config['debug'] ? new MakeUniversignTimestampDev($config, $this) : new MakeUniversignTimestamp($config, $this),
+            'digicert' => new MakeDigicertTimestamp($config, $this),
+            'sectigo' => new MakeSectigoTimestamp($config, $this),
+            'globalsign' => new MakeGlobalSignTimestamp($config, $this),
+            default => throw new ImproperActionException('Incorrect timestamp authority configuration.'),
+        };
+    }
+
+    private function timestamp(): array
+    {
+        $Config = Config::getConfig();
+        $Maker = $this->getTimestampMaker($Config->configArr);
+        $pdfBlob = $Maker->generatePdf();
+        $TimestampUtils = new TimestampUtils(
+            new Client(),
+            $pdfBlob,
+            $Maker->getTimestampParameters(),
+            new TimestampResponse(),
+        );
+        $tsResponse = $TimestampUtils->timestamp();
+        $Maker->saveTimestamp($TimestampUtils->getDataPath(), $tsResponse);
+        return $this->readOne();
     }
 
     /**

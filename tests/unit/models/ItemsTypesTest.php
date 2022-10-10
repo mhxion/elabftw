@@ -9,8 +9,7 @@
 
 namespace Elabftw\Models;
 
-use Elabftw\Elabftw\ContentParams;
-use Elabftw\Elabftw\ItemTypeParams;
+use Elabftw\Enums\Action;
 
 class ItemsTypesTest extends \PHPUnit\Framework\TestCase
 {
@@ -30,24 +29,8 @@ class ItemsTypesTest extends \PHPUnit\Framework\TestCase
             'canwrite' => 'team',
             'bookable' => '0',
         );
-        $this->ItemsTypes->create(
-            new ItemTypeParams('new', 'all', $extra)
-        );
-        $itemsTypes = $this->ItemsTypes->readAll();
-        $last = array_pop($itemsTypes);
-        $this->ItemsTypes->setId((int) $last['category_id']);
-        $extra = array(
-            'color' => '#fffccc',
-            'body' => 'newbody',
-            'canread' => 'team',
-            'canwrite' => 'team',
-            'bookable' => '1',
-        );
-        $this->ItemsTypes->updateAll(
-            new ItemTypeParams('new', 'all', $extra)
-        );
-        $this->assertEquals('newbody', $this->ItemsTypes->read(new ContentParams())['body']);
-        $this->ItemsTypes->setId((int) $last['category_id']);
-        $this->ItemsTypes->destroy();
+        $this->ItemsTypes->setId($this->ItemsTypes->create('new'));
+        $this->ItemsTypes->patch(Action::Update, $extra);
+        $this->assertTrue($this->ItemsTypes->destroy());
     }
 }

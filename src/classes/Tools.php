@@ -9,6 +9,8 @@
 
 namespace Elabftw\Elabftw;
 
+use function bin2hex;
+use function date;
 use function filter_var;
 use function implode;
 use function json_decode;
@@ -16,6 +18,8 @@ use League\CommonMark\Exception\UnexpectedEncodingException;
 use League\CommonMark\GithubFlavoredMarkdownConverter;
 use function mb_strlen;
 use function pathinfo;
+use function random_bytes;
+use function sha1;
 use Symfony\Component\HttpFoundation\Request;
 use function trim;
 
@@ -139,6 +143,16 @@ class Tools
     }
 
     /**
+     * Generate unique elabID
+     *
+     * @return string unique elabid with date in front of it
+     */
+    public static function generateElabid(): string
+    {
+        return date('Ymd') . '-' . sha1(bin2hex(random_bytes(16)));
+    }
+
+    /**
      * Get the extension of a file.
      *
      * @param string $filename path of the file
@@ -176,63 +190,6 @@ class Tools
             return _('This section is out of your reach!');
         }
         return _('An error occurred!');
-    }
-
-    /**
-     * Return a lang to use with fullcalendar from the pref
-     *
-     * @param string $lang 'pt_BR' or 'fr_FR'
-     */
-    public static function getCalendarLang(string $lang): string
-    {
-        $map = array(
-            'ca_ES' => 'ca',
-            'de_DE' => 'de',
-            'en_GB' => 'en',
-            'es_ES' => 'es',
-            'fr_FR' => 'fr',
-            'id_ID' => 'id',
-            'it_IT' => 'it',
-            'ja_JP' => 'ja',
-            'ko_KR' => 'ko',
-            'nl_BE' => 'nl',
-            'pl_PL' => 'pl',
-            'pt_BR' => 'pt-br',
-            'pt_PT' => 'pt',
-            'ru_RU' => 'ru',
-            'sl_SI' => 'sl',
-            'sk_SK' => 'sk',
-            'zh_CN' => 'zh-cn',
-        );
-        return $map[$lang];
-    }
-
-    /**
-     * Get an associative array for the langs to display in a select
-     *
-     * @return array<string,string>
-     */
-    public static function getLangsArr(): array
-    {
-        return array(
-            'ca_ES' => 'Spanish (Catalan)',
-            'de_DE' => 'German',
-            'en_GB' => 'English (UK)',
-            'es_ES' => 'Spanish',
-            'fr_FR' => 'French',
-            'id_ID' => 'Indonesian',
-            'it_IT' => 'Italian',
-            'ja_JP' => 'Japanese',
-            'ko_KR' => 'Korean',
-            'nl_BE' => 'Dutch',
-            'pl_PL' => 'Polish',
-            'pt_BR' => 'Portuguese (Brazilian)',
-            'pt_PT' => 'Portuguese',
-            'ru_RU' => 'Russian',
-            'sl_SI' => 'Slovenian',
-            'sk_SK' => 'Slovak',
-            'zh_CN' => 'Chinese Simplified',
-        );
     }
 
     /**
@@ -306,6 +263,10 @@ class Tools
                 foreach ($value as $tag) {
                     $res .= '&tags[]=' . $tag;
                 }
+            } elseif ($key === 'metavalue') {
+                foreach ($value as $metavalue) {
+                    $res .= '&metavalue[]=' . $metavalue;
+                }
             } else {
                 $res .= '&' . (string) $key . '=' . $value;
             }
@@ -319,6 +280,9 @@ class Tools
 
     public static function getShortElabid(string $elabid): string
     {
+        if (empty($elabid)) {
+            return bin2hex(random_bytes(4));
+        }
         return substr(explode('-', $elabid)[1], 0, 8);
     }
 }

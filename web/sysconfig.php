@@ -13,8 +13,10 @@ declare(strict_types=1);
 namespace Elabftw\Elabftw;
 
 use function dirname;
+use Elabftw\Enums\Language;
 use Elabftw\Exceptions\IllegalActionException;
 use Elabftw\Models\AuthFail;
+use Elabftw\Models\Experiments;
 use Elabftw\Models\Idps;
 use Elabftw\Models\Teams;
 use Elabftw\Services\UsersHelper;
@@ -29,8 +31,9 @@ use Symfony\Component\HttpFoundation\Response;
  */
 require_once 'app/init.inc.php';
 $App->pageTitle = _('eLabFTW Configuration');
+/** @psalm-suppress UncaughtThrowInGlobalScope */
 $Response = new Response();
-$Response->prepare($Request);
+$Response->prepare($App->Request);
 
 $template = 'error.html';
 $renderArr = array();
@@ -46,15 +49,16 @@ try {
     $Teams = new Teams($App->Users);
     $teamsArr = $Teams->readAll();
     $teamsStats = $Teams->getAllStats();
+    $Experiments = new Experiments($App->Users);
 
     // Users search
     $isSearching = false;
     $usersArr = array();
-    if ($Request->query->has('q')) {
+    if ($App->Request->query->has('q')) {
         $isSearching = true;
         $usersArr = $App->Users->readFromQuery(
-            filter_var($Request->query->get('q'), FILTER_SANITIZE_STRING),
-            (int) filter_var($Request->query->get('teamFilter'), FILTER_SANITIZE_NUMBER_INT)
+            filter_var($App->Request->query->get('q'), FILTER_SANITIZE_STRING),
+            (int) filter_var($App->Request->query->get('teamFilter'), FILTER_SANITIZE_NUMBER_INT)
         );
         foreach ($usersArr as &$user) {
             $UsersHelper = new UsersHelper((int) $user['userid']);
@@ -62,7 +66,6 @@ try {
         }
     }
 
-    $langsArr = Tools::getLangsArr();
 
     $phpInfos = array(
         PHP_OS,
@@ -80,18 +83,19 @@ try {
 
     $template = 'sysconfig.html';
     $renderArr = array(
-        'Request' => $Request,
-        'nologinUsersCount' => $App->Users->getLockedUsersCount(),
+        'Request' => $App->Request,
+        'nologinUsersCount' => $AuthFail->getLockedUsersCount(),
         'lockoutDevicesCount' => $AuthFail->getLockoutDevicesCount(),
         'elabimgVersion' => $elabimgVersion,
         'idpsArr' => $idpsArr,
         'isSearching' => $isSearching,
-        'langsArr' => $langsArr,
+        'langsArr' => Language::getAllHuman(),
         'phpInfos' => $phpInfos,
         'privacyPolicyTemplate' => $privacyPolicyTemplate,
         'Teams' => $Teams,
         'teamsArr' => $teamsArr,
         'teamsStats' => $teamsStats,
+        'timestampLastMonth' => $Experiments->getTimestampLastMonth(),
         'usersArr' => $usersArr,
     );
 } catch (IllegalActionException $e) {

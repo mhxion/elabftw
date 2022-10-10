@@ -12,11 +12,11 @@
 
     <a class='elab-tooltip-top' style='color:#343434' href='https://gitter.im/elabftw/elabftw'>
       <span>{{ 'Join the discussion on Gitter'|trans }}</span>
-        <i title='Gitter' class='fab fa-gitter fa-lg'></i>
+        <i title='Gitter' class='fas fa-comment-dots fa-lg'></i>
     </a>
 
-    <a class='elab-tooltip-top' style='color:#343434' href='https://github.com/elabftw/elabftw/issues/new/choose'>
-      <span>{{ 'Report a bug'|trans }}</span>
+    <a class='elab-tooltip-top' data-action='report-bug' style='color:#343434' href='#'>
+      <span>{{ 'Submit feedback'|trans }}</span>
         <i title='Report bug' class='fas fa-bug fa-lg'></i>
     </a>
 
@@ -30,7 +30,7 @@
         <a href='admin.php'>{{ 'Admin panel'|trans }}
 
           {% if unvalidatedUsersCount > 0 %}
-            <span class='badge badge-dark p-1'>{{ unvalidatedUsersCount }}</span>
+            <span class='badge badge-dark p-1' title='{{ 'Unconfirmed users'|trans }}'>{{ unvalidatedUsersCount }}</span>
             <span class='sr-only'>{{ 'Unconfirmed users'|trans }}</span>
           {% endif %}
         </a>
@@ -61,8 +61,8 @@
 </div><!-- end real-container -->
 
 <div id='user-prefs'
-  data-lang='{{ App.Session.has('is_auth') ? App.Users.userData.lang : App.Config.configArr.lang }}'
-  data-jslang='{{ (App.Session.has('is_auth') ? App.Users.userData.lang : App.Config.configArr.lang)|jslang }}'
+  data-lang='{{ App.getLang }}'
+  data-jslang='{{ App.getJsLang }}'
   data-isodate='{{ App.Session.has('is_auth') ? App.Users.userData.use_isodate : '0' }}'
   ></div>
 

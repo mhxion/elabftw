@@ -5,13 +5,17 @@
  * @license AGPL-3.0
  * @package elabftw
  */
-import { notif, reloadElement } from './misc';
+import { reloadElement } from './misc';
 import i18next from 'i18next';
+import { Action, Model } from './interfaces';
+import { Api } from './Apiv2.class';
 
 document.addEventListener('DOMContentLoaded', () => {
   if (document.getElementById('info')?.dataset?.page !== 'edit') {
     return;
   }
+
+  const ApiC = new Api();
 
   // store the clicks
   let clickX = [];
@@ -73,26 +77,17 @@ document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('saveCanvas').addEventListener('click', (e) => {
     const image = doodleCanvas.toDataURL();
     const elDataset = (e.target as HTMLButtonElement).dataset;
-    let type = elDataset.type;
-    const id = elDataset.id;
     const realName = prompt(i18next.t('request-filename'));
     if (realName === null || realName === '') {
       return;
     }
-    $.post('app/controllers/EntityAjaxController.php', {
-      addFromString: true,
-      type: type,
-      realName: realName,
-      id: id,
-      fileType: 'png',
-      string: image,
-    }).done(function(json) {
-      if (type === 'items') {
-        type = 'database';
-      }
-      reloadElement('filesdiv');
-      notif(json);
-    });
+    const params = {
+      'action': Action.CreateFromString,
+      'file_type': 'png',
+      'real_name': realName,
+      'content': image,
+    };
+    ApiC.post(`${elDataset.type}/${elDataset.id}/${Model.Upload}`, params).then(() => reloadElement('filesdiv'));
   });
 
 

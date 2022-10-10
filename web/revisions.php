@@ -1,14 +1,11 @@
-<?php
+<?php declare(strict_types=1);
 /**
- * revisions.php
- *
  * @author Nicolas CARPi <nico-git@deltablot.email>
- * @copyright 2012 Nicolas CARPi
+ * @copyright 2012, 2022 Nicolas CARPi
  * @see https://www.elabftw.net Official website
  * @license AGPL-3.0
  * @package elabftw
  */
-declare(strict_types=1);
 
 namespace Elabftw\Elabftw;
 
@@ -16,10 +13,8 @@ use Elabftw\Exceptions\DatabaseErrorException;
 use Elabftw\Exceptions\FilesystemErrorException;
 use Elabftw\Exceptions\IllegalActionException;
 use Elabftw\Exceptions\ImproperActionException;
-use Elabftw\Models\Experiments;
-use Elabftw\Models\Items;
+use Elabftw\Factories\EntityFactory;
 use Elabftw\Models\Revisions;
-use Elabftw\Models\Templates;
 use Exception;
 use Symfony\Component\HttpFoundation\Response;
 
@@ -30,22 +25,14 @@ use Symfony\Component\HttpFoundation\Response;
 require_once 'app/init.inc.php';
 $App->pageTitle = _('Revisions');
 // default response is error page with general error message
+/** @psalm-suppress UncaughtThrowInGlobalScope */
 $Response = new Response();
-$Response->prepare($Request);
+$Response->prepare($App->Request);
 
 try {
-    if ($Request->query->get('type') === 'experiments') {
-        $Entity = new Experiments($App->Users);
-    } elseif ($Request->query->get('type') === 'experiments_templates') {
-        $Entity = new Templates($App->Users);
-    } elseif ($Request->query->get('type') === 'items') {
-        $Entity = new Items($App->Users);
-    } else {
-        throw new IllegalActionException('Bad type!');
-    }
-
-    $Entity->setId((int) $Request->query->get('item_id'));
-    $Entity->canOrExplode('write');
+    $Entity = (new EntityFactory($App->Users, (string) $App->Request->query->get('type')))->getEntity();
+    $Entity->setId($App->Request->query->getInt('item_id'));
+    $Entity->canOrExplode('read');
 
     $Revisions = new Revisions(
         $Entity,

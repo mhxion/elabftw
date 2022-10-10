@@ -8,30 +8,29 @@
 import $ from 'jquery';
 import 'jquery-ui/ui/widgets/autocomplete';
 import { Malle } from '@deltablot/malle';
-import Link from './Link.class';
 import Step from './Step.class';
 import i18next from 'i18next';
-import { relativeMoment, makeSortableGreatAgain, reloadElement } from './misc';
-import { addAutocompleteToLinkInputs, getCheckedBoxes, notif, getEntity, adjustHiddenState } from './misc';
-import { Entity, Target } from './interfaces';
+import { relativeMoment, makeSortableGreatAgain, reloadElement, reloadElements, addAutocompleteToLinkInputs, getCheckedBoxes, notif, getEntity, adjustHiddenState } from './misc';
+import { Action, Target } from './interfaces';
+import { Api } from './Apiv2.class';
+
 
 document.addEventListener('DOMContentLoaded', () => {
   if (!document.getElementById('info')) {
     return;
   }
   const entity = getEntity();
+  const ApiC = new Api();
 
   // STEPS
   const StepC = new Step(entity);
-
-  // LINKS
-  const LinkC = new Link(entity);
 
   relativeMoment();
 
   // MAIN LISTENER for actions
   document.querySelector('.real-container').addEventListener('click', event => {
     const el = (event.target as HTMLElement);
+
     // ADD DEADLINE ON STEP
     if (el.matches('[data-action="step-update-deadline"]')) {
       const value = (document.getElementById('stepSelectDeadline_' + el.dataset.stepid) as HTMLSelectElement).value;
@@ -40,9 +39,7 @@ document.addEventListener('DOMContentLoaded', () => {
       });
     // TOGGLE DEADLINE NOTIFICATIONS ON STEP
     } else if (el.matches('[data-action="step-toggle-deadline-notif"]')) {
-      StepC.update(parseInt(el.dataset.stepid, 10), null, Target.DeadlineNotif).then(() => {
-        reloadElement('stepsDiv');
-      });
+      StepC.notif(parseInt(el.dataset.stepid, 10)).then(() => reloadElement('stepsDiv'));
 
     // DESTROY DEADLINE ON STEP
     } else if (el.matches('[data-action="step-destroy-deadline"]')) {
@@ -51,11 +48,11 @@ document.addEventListener('DOMContentLoaded', () => {
       });
     // IMPORT LINK(S) OF LINK
     } else if (el.matches('[data-action="import-links"]')) {
-      LinkC.importLinks(parseInt(el.dataset.target, 10)).then(() => reloadElement('linksDiv'));
+      Promise.allSettled(['items_links', 'experiments_links'].map(endpoint => ApiC.post(`${entity.type}/${entity.id}/${endpoint}/${el.dataset.target}`, {'action': Action.Duplicate}))).then(() => reloadElements(['linksDiv', 'linksExpDiv']));
     // DESTROY LINK
     } else if (el.matches('[data-action="destroy-link"]')) {
       if (confirm(i18next.t('link-delete-warning'))) {
-        LinkC.destroy(parseInt(el.dataset.target, 10)).then(() => reloadElement('linksDiv'));
+        ApiC.delete(`${entity.type}/${entity.id}/${el.dataset.endpoint}/${el.dataset.target}`).then(() => reloadElements(['linksDiv', 'linksExpDiv']));
       }
     }
   });
@@ -151,33 +148,30 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // END STEPS
 
-  // CREATE
+  // CREATE LINK
   // listen keypress, add link when it's enter or on blur
-  $(document).on('keypress blur', '#linkinput', function(e) {
+  $(document).on('keypress blur', '.linkinput', function(e) {
     // Enter is ascii code 13
     if (e.which === 13 || e.type === 'focusout') {
-      // grab the id from the target
-      const target = parseInt($(this).val() as string);
-      // only send request if there is a targetId
+      // grab the id from the value of the input, but only before the first space, which is the ID
+      const target = parseInt(($(this).val() as string).split(' ')[0], 10);
+      // only send request if target is a number
       if (Number.isNaN(target)) {
         return;
       }
-      LinkC.create(target).then(() => {
-        // only reload children of links_div_id
-        reloadElement('links_div_' + entity.id).then(() => {
-          // clear input field
-          (document.getElementById('linkinput') as HTMLInputElement).value = '';
-        });
+      ApiC.post(`${entity.type}/${entity.id}/${$(this).data('endpoint')}/${target}`).then(() => {
+        reloadElements(['linksDiv', 'linksExpDiv']);
+        // clear input field
+        $(this).val('');
       });
-      $(this).val('');
     }
   });
-
   // CREATE FOR MULTIPLE ENTITIES
-  $(document).on('keypress blur', '#linkInputMultiple', function(e) {
+  $(document).on('keypress blur', '.linkInputMultiple', function(e) {
     if ($(this).val() === '') {
       return;
     }
+    const el = $(this);
     // Enter is ascii code 13
     if (e.which === 13 || e.type === 'focusout') {
       // get the ids of selected entities
@@ -191,12 +185,7 @@ document.addEventListener('DOMContentLoaded', () => {
         return;
       }
       $.each(checked, function(index) {
-        const tmpEntity: Entity = {
-          type: entity.type,
-          id: checked[index]['id'],
-        };
-        const TmpLinkC = new Link(tmpEntity);
-        TmpLinkC.create(parseInt($('#linkInputMultiple').val() as string));
+        ApiC.post(`${entity.type}/${checked[index]['id']}/${el.data('endpoint')}/${parseInt(el.val() as string)}`);
       });
       $(this).val('');
     }

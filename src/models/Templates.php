@@ -9,9 +9,7 @@
 
 namespace Elabftw\Models;
 
-use Elabftw\Elabftw\ContentParams;
-use Elabftw\Interfaces\ContentParamsInterface;
-use Elabftw\Interfaces\EntityParamsInterface;
+use Elabftw\Enums\State;
 use Elabftw\Services\Filter;
 use Elabftw\Traits\SortableTrait;
 use PDO;
@@ -19,7 +17,7 @@ use PDO;
 /**
  * All about the templates
  */
-class Templates extends AbstractEntity
+class Templates extends AbstractTemplateEntity
 {
     use SortableTrait;
 
@@ -32,12 +30,18 @@ class Templates extends AbstractEntity
 
     public function __construct(Users $users, ?int $id = null)
     {
+        $this->type = parent::TYPE_TEMPLATES;
         parent::__construct($users, $id);
-        $this->type = 'experiments_templates';
     }
 
-    public function create(EntityParamsInterface $params): int
+    public function getPage(): string
     {
+        return 'ucp.php?tab=3&templateid=';
+    }
+
+    public function create(string $title): int
+    {
+        $title = Filter::title($title);
         $canread = 'team';
         $canwrite = 'user';
 
@@ -48,12 +52,11 @@ class Templates extends AbstractEntity
             $canwrite = $this->Users->userData['default_write'];
         }
 
-        $sql = 'INSERT INTO experiments_templates(team, title, body, userid, canread, canwrite)
-            VALUES(:team, :title, :body, :userid, :canread, :canwrite)';
+        $sql = 'INSERT INTO experiments_templates(team, title, userid, canread, canwrite)
+            VALUES(:team, :title, :userid, :canread, :canwrite)';
         $req = $this->Db->prepare($sql);
         $req->bindParam(':team', $this->Users->userData['team'], PDO::PARAM_INT);
-        $req->bindValue(':title', $params->getContent());
-        $req->bindValue(':body', $params->getExtraBody());
+        $req->bindValue(':title', Filter::title($title));
         $req->bindParam(':userid', $this->Users->userData['userid'], PDO::PARAM_INT);
         $req->bindParam(':canread', $canread);
         $req->bindParam(':canwrite', $canwrite);
@@ -66,7 +69,7 @@ class Templates extends AbstractEntity
      */
     public function duplicate(): int
     {
-        $template = $this->read(new ContentParams());
+        $template = $this->readOne();
 
         $sql = 'INSERT INTO experiments_templates(team, title, body, userid, canread, canwrite, metadata)
             VALUES(:team, :title, :body, :userid, :canread, :canwrite, :metadata)';
@@ -86,27 +89,22 @@ class Templates extends AbstractEntity
         $Tags->copyTags($newId);
 
         // copy links and steps too
-        $Links = new Links($this);
+        $ItemsLinks = new ItemsLinks($this);
+        $ItemsLinks->duplicate((int) $template['id'], $newId, true);
         $Steps = new Steps($this);
-        $Links->duplicate((int) $template['id'], $newId, true);
         $Steps->duplicate((int) $template['id'], $newId, true);
 
         return $newId;
     }
 
-    /**
-     * Read a template
-     */
-    public function read(ContentParamsInterface $params): array
+    public function readOne(): array
     {
-        if ($params->getTarget() === 'list') {
-            return $this->getList();
-        }
-
         $sql = "SELECT experiments_templates.id, experiments_templates.title, experiments_templates.body,
+            experiments_templates.created_at, experiments_templates.modified_at,
             experiments_templates.userid, experiments_templates.canread, experiments_templates.canwrite,
             experiments_templates.locked, experiments_templates.lockedby, experiments_templates.lockedwhen,
             CONCAT(users.firstname, ' ', users.lastname) AS fullname, experiments_templates.metadata, experiments_templates.state,
+            users.firstname, users.lastname, users.orcid,
             GROUP_CONCAT(tags.tag SEPARATOR '|') AS tags, GROUP_CONCAT(tags.id) AS tags_id
             FROM experiments_templates
             LEFT JOIN users ON (experiments_templates.userid = users.userid)
@@ -116,12 +114,12 @@ class Templates extends AbstractEntity
         $req = $this->Db->prepare($sql);
         $req->bindParam(':id', $this->id, PDO::PARAM_INT);
         $this->Db->execute($req);
-
-        $res = $this->Db->fetch($req);
-        $this->entityData = $res;
+        $this->entityData = $this->Db->fetch($req);
         $this->canOrExplode('read');
-
-        return $res;
+        // add steps and links in there too
+        $this->entityData['steps'] = $this->Steps->readAll();
+        $this->entityData['items_links'] = $this->ItemsLinks->readAll();
+        return $this->entityData;
     }
 
     /**
@@ -133,7 +131,7 @@ class Templates extends AbstractEntity
         $TeamGroups = new TeamGroups($this->Users);
         $teamgroupsOfUser = array_column($TeamGroups->readGroupsFromUser(), 'id');
 
-        return array_filter($this->getTemplatesList(), function ($t) use ($teamgroupsOfUser) {
+        return array_filter($this->readAll(), function ($t) use ($teamgroupsOfUser) {
             return $t['canwrite'] === 'public' || $t['canwrite'] === 'organization' ||
                 ($t['canwrite'] === 'team' && ((int) $t['teams_id'] === $this->Users->userData['team'])) ||
                 ($t['canwrite'] === 'user' && $t['userid'] === $this->Users->userData['userid']) ||
@@ -146,7 +144,7 @@ class Templates extends AbstractEntity
      * Get a list of fullname + id + title of template
      * Use this to build a select of the readable templates
      */
-    public function getTemplatesList(): array
+    public function readAll(): array
     {
         $TeamGroups = new TeamGroups($this->Users);
         $teamgroupsOfUser = array_column($TeamGroups->readGroupsFromUser(), 'id');
@@ -156,12 +154,14 @@ class Templates extends AbstractEntity
                 experiments_templates.locked, experiments_templates.lockedby, experiments_templates.lockedwhen,
                 CONCAT(users.firstname, ' ', users.lastname) AS fullname, experiments_templates.metadata,
                 users2teams.teams_id,
+                (pin_experiments_templates2users.entity_id IS NOT NULL) AS is_pinned,
                 GROUP_CONCAT(tags.tag SEPARATOR '|') AS tags, GROUP_CONCAT(tags.id) AS tags_id
                 FROM experiments_templates
                 LEFT JOIN users ON (experiments_templates.userid = users.userid)
                 LEFT JOIN users2teams ON (users2teams.users_id = users.userid AND users2teams.teams_id = :team)
                 LEFT JOIN tags2entity ON (experiments_templates.id = tags2entity.item_id AND tags2entity.item_type = 'experiments_templates')
                 LEFT JOIN tags ON (tags2entity.tag_id = tags.id)
+                LEFT JOIN pin_experiments_templates2users ON (experiments_templates.id = pin_experiments_templates2users.entity_id)
                 WHERE experiments_templates.userid != 0 AND experiments_templates.state = :state AND (
                     experiments_templates.canread = 'public' OR
                     experiments_templates.canread = 'organization' OR
@@ -173,16 +173,16 @@ class Templates extends AbstractEntity
         }
         $sql .= ')';
 
-        foreach ($this->filters as $filter) {
-            $sql .= sprintf(" AND %s = '%s'", $filter['column'], $filter['value']);
-        }
+        $sql .= $this->filterSql;
 
-        $sql .= 'GROUP BY id ORDER BY fullname, experiments_templates.ordering ASC';
+        $sql .= str_replace('entity', 'experiments_templates', $this->idFilter) . ' ';
+
+        $sql .= 'GROUP BY id ORDER BY fullname DESC, is_pinned DESC, experiments_templates.ordering ASC';
 
         $req = $this->Db->prepare($sql);
         $req->bindParam(':team', $this->Users->userData['team'], PDO::PARAM_INT);
         $req->bindParam(':userid', $this->Users->userData['userid'], PDO::PARAM_INT);
-        $req->bindValue(':state', self::STATE_NORMAL, PDO::PARAM_INT);
+        $req->bindValue(':state', State::Normal->value, PDO::PARAM_INT);
         $this->Db->execute($req);
 
         return $req->fetchAll();
@@ -194,25 +194,15 @@ class Templates extends AbstractEntity
      */
     public function readForUser(): array
     {
-        if (empty($this->Users->userData['userid'])) {
-            return array();
-        }
-        if (!$this->Users->userData['show_team_templates']) {
+        if ($this->Users->userData['show_team_templates'] === 0) {
             $this->addFilter('experiments_templates.userid', $this->Users->userData['userid']);
         }
-        return $this->getTemplatesList();
+        return $this->readAll();
     }
 
-    /**
-     * Build a list for tinymce Insert template... menu
-     */
-    private function getList(): array
+    public function destroy(): bool
     {
-        $templates = $this->readForUser();
-        $res = array();
-        foreach ($templates as $template) {
-            $res[] = array('title' => $template['title'], 'description' => '', 'content' => $template['body']);
-        }
-        return $res;
+        // delete from pinned too
+        return parent::destroy() && $this->Pins->cleanup();
     }
 }

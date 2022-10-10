@@ -1,4 +1,4 @@
-<?php
+<?php declare(strict_types=1);
 /**
  * @author Nicolas CARPi <nico-git@deltablot.email>
  * @copyright 2012 Nicolas CARPi
@@ -6,12 +6,11 @@
  * @license AGPL-3.0
  * @package elabftw
  */
-declare(strict_types=1);
 
 namespace Elabftw\Models;
 
-use Elabftw\Elabftw\ContentParams;
 use Elabftw\Elabftw\Db;
+use Elabftw\Elabftw\Tools;
 use PDO;
 
 /**
@@ -31,11 +30,10 @@ class Pins
      */
     public function isPinned(): bool
     {
-        $sql = 'SELECT DISTINCT id FROM pin2users WHERE entity_id = :entity_id AND type = :type AND users_id = :users_id';
+        $sql = 'SELECT entity_id FROM pin_' . $this->Entity->type . '2users WHERE entity_id = :entity_id AND users_id = :users_id';
         $req = $this->Db->prepare($sql);
         $req->bindParam(':users_id', $this->Entity->Users->userData['userid']);
         $req->bindParam(':entity_id', $this->Entity->id, PDO::PARAM_INT);
-        $req->bindParam(':type', $this->Entity->type);
 
         $this->Db->execute($req);
         return $req->rowCount() > 0;
@@ -44,42 +42,52 @@ class Pins
     /**
      * Add/remove current entity as pinned for current user
      */
-    public function togglePin(): bool
+    public function togglePin(): array
     {
-        return $this->isPinned() ? $this->rmFromPinned() : $this->addToPinned();
+        $this->isPinned() ? $this->rmFromPinned() : $this->addToPinned();
+        return $this->Entity->readOne();
+    }
+
+    /**
+     * Only read id and title to show in the create-new menu
+     */
+    public function readAllSimple(): array
+    {
+        $sql = sprintf(
+            'SELECT %1$s.title, %1$s.id FROM pin_%1$s2users LEFT JOIN %1$s ON (entity_id = %1$s.id) WHERE users_id = :users_id',
+            $this->Entity->type
+        );
+        $req = $this->Db->prepare($sql);
+        $req->bindParam(':users_id', $this->Entity->Users->userData['userid']);
+
+        $this->Db->execute($req);
+        return $req->fetchAll();
     }
 
     /**
      * Get the items pinned by current users to display in show mode
      */
-    public function getPinned(): array
+    public function readAll(): array
     {
-        $sql = 'SELECT DISTINCT entity_id FROM pin2users WHERE users_id = :users_id AND type = :type';
+        $sql = 'SELECT entity_id FROM pin_' . $this->Entity->type . '2users WHERE users_id = :users_id';
         $req = $this->Db->prepare($sql);
         $req->bindParam(':users_id', $this->Entity->Users->userData['userid']);
-        $req->bindParam(':type', $this->Entity->type);
 
         $this->Db->execute($req);
 
         $entity = clone $this->Entity;
-
-        $pinArr = array();
-        foreach ($req->fetchAll() as $id) {
-            $entity->setId((int) $id['entity_id']);
-            $pinArr[] = $entity->read(new ContentParams());
-        }
-        return $pinArr;
+        $entity->idFilter = Tools::getIdFilterSql(array_column($req->fetchAll(), 'entity_id'));
+        return $entity->readAll();
     }
 
     /**
-     * Remove all traces of that entity because it has been destroyed
+     * Remove all traces of that entity because it has been set to deleted
      */
     public function cleanup(): bool
     {
-        $sql = 'DELETE FROM pin2users WHERE entity_id = :entity_id AND type = :type';
+        $sql = 'DELETE FROM pin_' . $this->Entity->type . '2users WHERE entity_id = :entity_id';
         $req = $this->Db->prepare($sql);
         $req->bindParam(':entity_id', $this->Entity->id, PDO::PARAM_INT);
-        $req->bindParam(':type', $this->Entity->type);
 
         return $this->Db->execute($req);
     }
@@ -91,11 +99,10 @@ class Pins
     {
         $this->Entity->canOrExplode('read');
 
-        $sql = 'DELETE FROM pin2users WHERE entity_id = :entity_id AND users_id = :users_id AND type = :type';
+        $sql = 'DELETE FROM pin_' . $this->Entity->type . '2users WHERE entity_id = :entity_id AND users_id = :users_id';
         $req = $this->Db->prepare($sql);
         $req->bindParam(':users_id', $this->Entity->Users->userData['userid']);
         $req->bindParam(':entity_id', $this->Entity->id, PDO::PARAM_INT);
-        $req->bindParam(':type', $this->Entity->type);
 
         return $this->Db->execute($req);
     }
@@ -107,11 +114,10 @@ class Pins
     {
         $this->Entity->canOrExplode('read');
 
-        $sql = 'INSERT INTO pin2users(users_id, entity_id, type) VALUES (:users_id, :entity_id, :type)';
+        $sql = 'INSERT INTO pin_' . $this->Entity->type . '2users(users_id, entity_id) VALUES (:users_id, :entity_id)';
         $req = $this->Db->prepare($sql);
         $req->bindParam(':users_id', $this->Entity->Users->userData['userid']);
         $req->bindParam(':entity_id', $this->Entity->id, PDO::PARAM_INT);
-        $req->bindParam(':type', $this->Entity->type);
 
         return $this->Db->execute($req);
     }

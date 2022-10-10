@@ -9,8 +9,7 @@
 
 namespace Elabftw\Models;
 
-use Elabftw\Elabftw\ContentParams;
-use Elabftw\Elabftw\EntityParams;
+use Elabftw\Enums\Action;
 
 class TemplatesTest extends \PHPUnit\Framework\TestCase
 {
@@ -23,41 +22,42 @@ class TemplatesTest extends \PHPUnit\Framework\TestCase
 
     public function testCreate(): void
     {
-        $this->Templates->create(new EntityParams('Test tpl', '', array('body' => 'pwet')));
+        $this->assertIsInt($this->Templates->postAction(Action::Create, array('title' => 'Test tpl')));
     }
 
     public function testRead(): void
     {
         $this->Templates->setId(1);
-        $this->assertTrue(is_array($this->Templates->read(new ContentParams())));
+        $this->assertIsArray($this->Templates->readOne());
     }
 
     public function testGetWriteableTemplatesList(): void
     {
-        $this->assertTrue(is_array($this->Templates->getWriteableTemplatesList()));
+        $this->assertIsArray($this->Templates->getWriteableTemplatesList());
     }
 
     public function testDuplicate(): void
     {
         $this->Templates->setId(1);
-        $this->assertIsInt($this->Templates->duplicate());
+        $this->assertIsInt($this->Templates->postAction(Action::Duplicate, array()));
     }
 
     public function testReadForUser(): void
     {
-        $this->assertTrue(is_array($this->Templates->readForUser()));
+        $this->assertIsArray($this->Templates->readForUser());
     }
 
     public function testUpdate(): void
     {
         $this->Templates->setId(1);
-        $this->Templates->update(new EntityParams('Database item 1', 'title'));
-        $this->Templates->update(new EntityParams('pwet', 'body'));
+        $entityData = $this->Templates->patch(Action::Update, array('title' => 'Untitled', 'body' => '<p>Body</p>'));
+        $this->assertEquals('Untitled', $entityData['title']);
+        $this->assertEquals('<p>Body</p>', $entityData['body']);
     }
 
     public function testDestroy(): void
     {
         $this->Templates->setId(1);
-        $this->Templates->destroy();
+        $this->assertTrue($this->Templates->destroy());
     }
 }

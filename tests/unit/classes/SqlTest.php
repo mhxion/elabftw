@@ -9,7 +9,7 @@
 
 namespace Elabftw\Elabftw;
 
-use Elabftw\Services\StorageFactory;
+use Elabftw\Factories\StorageFactory;
 use League\Flysystem\Filesystem as Fs;
 use League\Flysystem\UnableToReadFile;
 
@@ -24,7 +24,7 @@ class SqlTest extends \PHPUnit\Framework\TestCase
 
     public function testExecFile(): void
     {
-        $this->Sql->execFile('dummy.sql');
+        $this->assertEquals(3, $this->Sql->execFile('dummy.sql'));
     }
 
     public function testExecNonExistingFile(): void

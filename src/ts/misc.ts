@@ -8,13 +8,12 @@
 declare let ChemDoodle: any; // eslint-disable-line @typescript-eslint/no-explicit-any
 import 'jquery-ui/ui/widgets/sortable';
 import * as $3Dmol from '3dmol/build/3Dmol-nojquery.js';
-import { CheckableItem, ResponseMsg } from './interfaces';
+import { CheckableItem, ResponseMsg, EntityType, Entity, Model } from './interfaces';
 import { DateTime } from 'luxon';
-import { EntityType, Entity } from './interfaces';
 import { MathJaxObject } from 'mathjax-full/js/components/startup';
 declare const MathJax: MathJaxObject;
-import { Payload, Method, Model, Action, Target } from './interfaces';
-import { Ajax } from './Ajax.class';
+import i18next from 'i18next';
+import { Api } from './Apiv2.class';
 
 // get html of current page reloaded via get
 function fetchCurrentPage(tag = ''): Promise<Document>{
@@ -43,6 +42,34 @@ export function relativeMoment(): void {
     }
     span.innerText = DateTime.fromFormat(span.title, 'yyyy-MM-dd HH:mm:ss', {'locale': locale}).toRelative();
   });
+}
+
+/**
+ * Loop over all the input and select elements of an element and collect their value
+ * Returns an object with name => value
+ */
+export function collectForm(form: HTMLElement): object {
+  let params = {};
+  ['input', 'select'].forEach(inp => {
+    form.querySelectorAll(inp).forEach((input: HTMLInputElement) => {
+      const el = input as HTMLInputElement;
+      if (el.reportValidity() === false) {
+        throw new Error('Invalid input found! Aborting.');
+      }
+      if (el.dataset.ignore !== '1') {
+        params = Object.assign(params, {[input.name]: input.value});
+      }
+      if (el.name === 'password') {
+        // clear a password field once collected
+        el.value = '';
+      }
+    });
+  });
+  // don't send an empty password
+  if (params['password'] === '') {
+    delete params['password'];
+  }
+  return params;
 }
 
 // for view or edit mode, get type and id from the page to construct the entity object
@@ -74,7 +101,13 @@ export function getEntity(): Entity {
     id: entityId,
   };
 }
+export function notifError(e): void {
+  return notif({'res': false, 'msg': e.name + ': ' + e.message});
+}
 
+export function notifSaved(): void {
+  return notif({'res': true, 'msg': i18next.t('saved')});
+}
 
 // PUT A NOTIFICATION IN TOP LEFT WINDOW CORNER
 export function notif(info: ResponseMsg): void {
@@ -84,7 +117,7 @@ export function notif(info: ResponseMsg): void {
   }
 
   const p = document.createElement('p');
-  p.innerText = (info.msg as string);
+  p.innerText = info.msg;
   const result = info.res ? 'ok' : 'ko';
   const overlay = document.createElement('div');
   overlay.setAttribute('id','overlay');
@@ -157,11 +190,16 @@ export function makeSortableGreatAgain(): void {
     // do ajax request to update db with new order
     update: function() {
       // send the order as an array
-      const ordering = $(this).sortable('toArray');
-      $.post('app/controllers/SortableAjaxController.php', {
-        table: $(this).data('table'),
-        ordering: ordering,
-      }).done(function(json) {
+      const params = {'table': $(this).data('table'), 'ordering': $(this).sortable('toArray')};
+      fetch('app/controllers/SortableAjaxController.php', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Requested-With': 'XMLHttpRequest',
+          'X-CSRF-Token': document.querySelector('meta[name="csrf-token"]').getAttribute('content'),
+        },
+        body: JSON.stringify(params),
+      }).then(resp => resp.json()).then(json => {
         notif(json);
       });
     },
@@ -198,9 +236,20 @@ export async function reloadEntitiesShow(tag = ''): Promise<void | Response> {
   addAutocompleteToTagInputs();
 }
 
-export async function reloadElement(elementId): Promise<void> {
+export async function reloadElements(elementIds: string[]): Promise<void> {
+  const html = await fetchCurrentPage();
+  elementIds.forEach(id => {
+    if (!document.getElementById(id)) {
+      console.error(`Could not find element with id ${id} to reload!`);
+      return;
+    }
+    document.getElementById(id).innerHTML = html.getElementById(id).innerHTML;
+  });
+}
+
+export async function reloadElement(elementId: string): Promise<void> {
   if (!document.getElementById(elementId)) {
-    console.error('Could not find element to reload!');
+    console.error(`Could not find element with id ${elementId} to reload!`);
     return;
   }
   const html = await fetchCurrentPage();
@@ -216,7 +265,7 @@ export function adjustHiddenState(): void {
     const localStorageKey = (el as HTMLElement).dataset.saveHidden + '-isHidden';
     if (localStorage.getItem(localStorageKey) === '1') {
       el.setAttribute('hidden', 'hidden');
-    // make sure to explicitely check for the value, because the key might not exist!
+    // make sure to explicitly check for the value, because the key might not exist!
     } else if (localStorage.getItem(localStorageKey) === '0') {
       el.removeAttribute('hidden');
     }
@@ -225,61 +274,120 @@ export function adjustHiddenState(): void {
 
 // AUTOCOMPLETE
 export function addAutocompleteToLinkInputs(): void {
-  let cache = {};
-  // this is the select category filter on add link input
-  const catFilterEl = (document.getElementById('addLinkCatFilter') as HTMLInputElement);
-  if (catFilterEl) {
-    // when we change the category filter, reset the cache
-    catFilterEl.addEventListener('change', () => {
-      cache = {};
-    });
-    ($('[data-autocomplete="links"]') as JQuery<HTMLInputElement>).autocomplete({
-      source: function(request: Record<string, string>, response: (data) => void): void {
-        const term = request.term;
-        if (term in cache) {
-          response(cache[term]);
-          return;
-        }
-        // TODO use AjaxC as for tags below
-        $.getJSON(`app/controllers/EntityAjaxController.php?source=items&filter=${catFilterEl.value}`, request, function(data) {
-          cache[term] = data;
-          response(data);
-        });
-      },
-    });
-  }
+  const cache = {};
+  const ApiC = new Api();
+  [{
+    selectElid: 'addLinkCatFilter',
+    itemType: EntityType.Item,
+    filterFamily: 'cat',
+    inputElId: 'addLinkItemsInput',
+  }, {
+    selectElid: 'addLinkExpCatFilter',
+    itemType: EntityType.Experiment,
+    filterFamily: 'owner',
+    inputElId: 'addLinkExpInput',
+  }, {
+    selectElid: 'addLinkCatFilter',
+    itemType: EntityType.Item,
+    filterFamily: 'cat',
+    inputElId: 'addLinkItemsInput',
+  }, {
+    selectElid: 'addLinkOwnerFilter',
+    itemType: EntityType.Experiment,
+    filterFamily: 'owner',
+    inputElId: 'addLinkExpInput',
+  }].forEach(object => {
+    const filterEl = (document.getElementById(object.selectElid) as HTMLInputElement);
+    if (filterEl) {
+      cache[object.selectElid] = {};
+      // when we change the category filter, reset the cache
+      filterEl.addEventListener('change', () => {
+        cache[object.selectElid] = {};
+      });
+      ($(`#${object.inputElId}`) as JQuery<HTMLInputElement>).autocomplete({
+        source: function(request: Record<string, string>, response: (data) => void): void {
+          const term = request.term;
+          if (term in cache[object.selectElid]) {
+            const res = [];
+            cache[object.selectElid][term].forEach(entity => {
+              res.push(`${entity.id} - [${entity.category}] ${entity.title.substring(0, 60)}`);
+            });
+            response(res);
+            return;
+          }
+          ApiC.getJson(`${object.itemType}/?${object.filterFamily}=${filterEl.value}&q=${request.term}`).then(json => {
+            cache[object.selectElid][term] = json;
+            const res = [];
+            json.forEach(entity => {
+              res.push(`${entity.id} - [${entity.category}] ${entity.title.substring(0, 60)}`);
+            });
+            response(res);
+          });
+        },
+        select: function(event: Event, ui): boolean {
+          const inputEl = event.target as HTMLInputElement;
+          inputEl.value = ui.item.label;
+          // don't let autocomplete change value of input element
+          return false;
+        },
+      });
+    }
+  });
 }
 
 export function addAutocompleteToTagInputs(): void {
-  const cache = {};
-  const AjaxC = new Ajax();
-  const entity = getEntity();
+  const ApiC = new Api();
   ($('[data-autocomplete="tags"]') as JQuery<HTMLInputElement>).autocomplete({
     source: function(request: Record<string, string>, response: (data) => void): void {
-      const term  = request.term;
-      if (term in cache) {
-        response(cache[term]);
-        return;
-      }
-      const payload: Payload = {
-        method: Method.GET,
-        action: Action.Read,
-        model: Model.Tag,
-        entity: entity,
-        target: Target.List,
-        content: term,
-      };
-      AjaxC.send(payload).then(json => {
-        cache[term] = json.value;
-        response(json.value);
+      ApiC.getJson(`${Model.TeamTags}/?q=${request.term}`).then(json => {
+        const res = [];
+        json.forEach(tag => {
+          res.push(tag.tag);
+        });
+        response(res);
       });
     },
   });
 }
 
+export function updateCategory(entity: Entity, value: string): string {
+  const ApiC = new Api();
+  ApiC.patch(`${entity.type}/${entity.id}`, {'category': value}).then(resp => {
+    resp.json().then(json => {
+      // change the color of the item border
+      // we first remove any status class
+      $('#main_section').css('border', null);
+      // and we add our new border color
+      // first : get what is the color of the new status
+      const css = '6px solid #' + json.color;
+      $('#main_section').css('border-left', css);
+      // TODO only in view mode reloadElement('main_section');
+    });
+  });
+  return value;
+}
+
+export function showContentPlainText(el: HTMLElement): void {
+  document.getElementById('plainTextAreaLabel').textContent = el.dataset.name;
+  fetch(`app/download.php?storage=${el.dataset.storage}&f=${el.dataset.path}`).then(response => {
+    return response.text();
+  }).then(fileContent => {
+    (document.getElementById('plainTextArea') as HTMLTextAreaElement).value = fileContent;
+    $('#plainTextModal').modal();
+  });
+}
 // used in edit.ts to build search patterns from strings that contain special characters
 // taken from https://developer.mozilla.org/en-US/docs/Web/JavaScript/Guide/Regular_Expressions#escaping
 export function escapeRegExp(string: string): string {
   // $& means the whole matched string
   return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+export function removeEmpty(params: object): object {
+  for (const [key, value] of Object.entries(params)) {
+    if (value === '') {
+      delete params[key];
+    }
+  }
+  return params;
 }
