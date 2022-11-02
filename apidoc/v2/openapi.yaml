@@ -608,6 +608,26 @@ paths:
       # Note: this has to be repeated manually for now
       # See https://github.com/OAI/OpenAPI-Specification/issues/445
       parameters:
+        - name: q
+          in: query
+          schema:
+            type: string
+          description: |
+            Search for a term in title, body or elabid.
+          examples:
+            first:
+              summary: Search for all experiments with the word "test".
+              value: test
+        - name: extended
+          in: query
+          schema:
+            type: string
+          description: |
+            Extended search (advanced query).
+          examples:
+            first:
+              summary: Search for all items with a rating of 2.
+              value: "rating%3A2"
         - name: related
           in: query
           schema:
@@ -667,10 +687,10 @@ paths:
           in: query
           schema:
             type: string
-            enum: ['csv', 'eln', 'json', 'qrpdf', 'pdf', 'pdfa', 'zip']
+            enum: ['csv', 'eln', 'json', 'qrpdf', 'pdf', 'pdfa', 'zip', 'zipa']
           default: json
           description: |
-            Get the entity in a different format like csv, pdf, eln or zip. "pdfa" means archive pdf (PDF/A).
+            Get the entity in a different format like csv, pdf, eln or zip. "pdfa" means archive pdf (PDF/A), same with "zipa".
           examples:
             first:
               summary: Generate a pdf
@@ -754,6 +774,26 @@ paths:
       operationId: read-items
       # start duplicate from GET /experiments (except related)
       parameters:
+        - name: q
+          in: query
+          schema:
+            type: string
+          description: |
+            Search for a term in title, body or elabid.
+          examples:
+            first:
+              summary: Search for all items with the word "test".
+              value: test
+        - name: extended
+          in: query
+          schema:
+            type: string
+          description: |
+            Extended search (advanced query).
+          examples:
+            first:
+              summary: Search for all items with a rating of 2.
+              value: "rating%3A2"
         - name: limit
           in: query
           schema:

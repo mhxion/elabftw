@@ -23,6 +23,8 @@ use Elabftw\Exceptions\ImproperActionException;
 use Elabftw\Exceptions\ResourceNotFoundException;
 use Elabftw\Interfaces\ContentParamsInterface;
 use Elabftw\Interfaces\RestInterface;
+use Elabftw\Services\AdvancedSearchQuery;
+use Elabftw\Services\AdvancedSearchQuery\Visitors\VisitorParameters;
 use Elabftw\Services\Check;
 use Elabftw\Services\Filter;
 use Elabftw\Services\Transform;
@@ -235,6 +237,11 @@ abstract class AbstractEntity implements RestInterface
 
         // add filters like related, owner or category
         $sql .= $displayParams->filterSql;
+
+        // extended search
+        if ($displayParams->searchType === 'extended') {
+            $this->processExtendedQuery($displayParams->extendedQuery);
+        }
 
         // metadata filter (this will just be empty if we're not doing anything metadata related)
         $sql .= implode(' ', $this->metadataFilter);
@@ -801,6 +808,19 @@ abstract class AbstractEntity implements RestInterface
     {
         foreach ($this->extendedValues as $bindValue) {
             $req->bindValue($bindValue['param'], $bindValue['value'], $bindValue['type']);
+        }
+    }
+
+    private function processExtendedQuery(string $extendedQuery): void
+    {
+        $advancedQuery = new AdvancedSearchQuery($extendedQuery, new VisitorParameters($this->type, $this->TeamGroups->getVisibilityList(), $this->TeamGroups->readGroupsWithUsersFromUser()));
+        $whereClause = $advancedQuery->getWhereClause();
+        if ($whereClause) {
+            $this->addToExtendedFilter($whereClause['where'], $whereClause['bindValues']);
+        }
+        $searchError = $advancedQuery->getException();
+        if (!empty($searchError)) {
+            throw new ImproperActionException('Error with extended search: ' . $searchError);
         }
     }
 }

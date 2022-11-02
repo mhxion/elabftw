@@ -15,6 +15,7 @@ use Elabftw\Enums\Sort;
 use Elabftw\Models\Users;
 use Elabftw\Services\Check;
 use Symfony\Component\HttpFoundation\Request;
+use function trim;
 
 /**
  * This class holds the values for limit, offset, order and sort
@@ -34,6 +35,9 @@ class DisplayParams
 
     // the search from the top right search bar on experiments/database
     public string $query = '';
+
+    // the extended search query
+    public string $extendedQuery = '';
 
     // if this variable is not empty the error message shown will be different if there are no results
     public string $searchType = '';
@@ -66,6 +70,10 @@ class DisplayParams
         if (!empty($this->Request->query->get('q'))) {
             $this->query = $this->Request->query->filter('q', null, FILTER_SANITIZE_STRING);
             $this->searchType = 'query';
+        }
+        if (!empty($this->Request->query->get('extended'))) {
+            $this->extendedQuery = trim((string) $this->Request->query->get('extended'));
+            $this->searchType = 'extended';
         }
         // now get pref from the filter-order-sort menu
         $this->sort = Sort::tryFrom($this->Request->query->getAlpha('sort')) ?? $this->sort;
