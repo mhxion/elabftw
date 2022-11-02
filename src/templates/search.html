@@ -231,16 +231,12 @@
             class='form-control'
             placeholder='author:"{{ App.Users.userData.fullname|raw }}" status:"Running"'
             spellcheck='false'
-          >{{ extended }}</textarea>
+          >{{ App.Request.query.get('extended') ? App.Request.query.get('extended')|trim : 'author:"' ~ App.Users.userData.fullname ~ '" ' }}</textarea>
           <pre id='search-highlighting' class='form-control d-none' aria-hidden='true'><code></code></pre>
 
         </div>
         <small class='form-text text-muted'>
           Press <kbd><kbd>ctrl</kbd> + <kbd>enter</kbd></kbd> or <kbd><kbd>⌘</kbd> + <kbd>enter</kbd></kbd> to submit search.
-          {% if App.Config.configArr.debug %}
-            <kbd data-action='toggle-next'>debug</kbd>
-            <pre hidden>{{ whereClause|raw }}</pre>
-          {% endif %}
         </small>
       </div>
       <div class='col-md-4 mb-2'>
