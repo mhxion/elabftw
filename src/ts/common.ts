@@ -29,6 +29,7 @@ import 'bootstrap-markdown-fa5/locale/bootstrap-markdown.ru.js';
 import 'bootstrap-markdown-fa5/locale/bootstrap-markdown.sl.js';
 import 'bootstrap-markdown-fa5/locale/bootstrap-markdown.sv.js';
 import 'bootstrap-markdown-fa5/locale/bootstrap-markdown.zh.js';
+import TableSorting from './TableSorting.class';
 
 document.addEventListener('DOMContentLoaded', () => {
 
@@ -51,6 +52,9 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   const ApiC = new Api();
+
+  const TableSortingC = new TableSorting();
+  TableSortingC.init();
 
   // set the language for js translated strings
   i18next.changeLanguage(document.getElementById('user-prefs').dataset.lang);
@@ -337,6 +341,10 @@ document.addEventListener('DOMContentLoaded', () => {
         const newId = location[location.length -1];
         window.location.href = `database.php?mode=edit&id=${newId}`;
       });
+    // DOWNLOAD TEMPLATE
+    } else if (el.matches('[data-action="download-template"]')) {
+      window.location.href = `make.php?format=eln&type=experiments_templates&id=${el.dataset.id}`;
+    // TOGGLE BODY
     } else if (el.matches('[data-action="toggle-body"]')) {
       const randId = el.dataset.randid;
       const plusMinusIcon = el.querySelector('.fas');
@@ -370,6 +378,8 @@ document.addEventListener('DOMContentLoaded', () => {
         bodyDiv.dataset.bodyLoaded = '1';
         // ask mathjax to reparse the page
         MathJax.typeset();
+
+        TableSortingC.init();
       });
     }
   });

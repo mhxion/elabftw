@@ -335,6 +335,7 @@
 <!-- TAB 4 - API KEYS -->
 <div class='box' data-tabcontent='4' hidden>
   <h3>{{ 'API keys'|trans }}</h3>
+  <p><a target='_blank' rel='noopener' href='https://doc.elabftw.net/api.html'>{{ 'Link to documentation'|trans }} <i class='fas fa-fw fa-arrow-up-right-from-square'></i></a></p>
   <div id='newKeyPlaceholder'></div>
   <h5>{{ 'Create new key'|trans }}</h5>
   <div class='row form-inline mx-0'>
@@ -349,7 +350,7 @@
   </div>
 
   <h5 id='existingKeys'>{{ 'Existing keys'|trans }}</h5>
-  <table id='apiTable' class='table' aria-describedby='existingKeys'>
+  <table id='apiTable' class='table' aria-describedby='existingKeys' data-table-sort='true'>
     <thead>
       <tr>
         <th scope='col'>#</th>
