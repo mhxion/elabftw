@@ -72,7 +72,6 @@ class Check
     {
         $color = filter_var(substr($color, 1, 7), FILTER_SANITIZE_STRING);
         if ($color === false || mb_strlen($color) !== 6) {
-            debug_print_backtrace();
             throw new ImproperActionException('Bad color');
         }
         return $color;
@@ -127,15 +126,6 @@ class Check
             throw new IllegalActionException('Invalid cookie!');
         }
         return Filter::sanitize($token);
-    }
-
-    public static function orcid(string $orcid): string
-    {
-        if (preg_match('/[0-9]{4}-[0-9]{4}-[0-9]{4}-[0-9]{4}/', $orcid) === 1) {
-            return $orcid;
-        }
-        // note: the input field should prevent any incorrect value from being submitted in the first place
-        throw new ImproperActionException('Incorrect value for orcid!');
     }
 
     public static function accessKey(string $ak): string

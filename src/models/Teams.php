@@ -258,6 +258,7 @@ class Teams implements RestInterface
 
     private function create(string $name): int
     {
+        $this->canWriteOrExplode();
         $name = Filter::title($name);
 
         $sql = 'INSERT INTO teams (name, common_template, common_template_md, link_name, link_href, force_canread, force_canwrite) VALUES (:name, :common_template, :common_template_md, :link_name, :link_href, :force_canread, :force_canwrite)';
@@ -321,6 +322,7 @@ class Teams implements RestInterface
     {
         $Config = Config::getConfig();
         if ($Config->configArr['saml_team_create']) {
+            $this->bypassWritePermission = true;
             return $this->postAction(Action::Create, array('name' => $name));
         }
         throw new ImproperActionException('The administrator disabled team creation on login. Contact your administrator for creating the team beforehand.');
