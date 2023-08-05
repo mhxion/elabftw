@@ -57,8 +57,8 @@ try {
         $sent = $Email->massEmail(
             $targetType,
             $targetId,
-            (string) $Request->request->get('subject'),
-            (string) $Request->request->get('body'),
+            $Request->request->getString('subject'),
+            $Request->request->getString('body'),
             $replyTo,
         );
         $App->Session->getFlashBag()->add('ok', sprintf(_('Email sent to %d users'), $sent));
