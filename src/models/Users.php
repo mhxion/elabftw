@@ -89,7 +89,8 @@ class Users implements RestInterface
         // this might throw an exception if the team doesn't exist and we can't create it on the fly
         $teams = $Teams->getTeamsFromIdOrNameOrOrgidArray($teams);
         $TeamsHelper = new TeamsHelper((int) $teams[0]['id']);
-
+        
+        $email = trim($email);
         $EmailValidator = new EmailValidator($email, $Config->configArr['email_domain']);
         $EmailValidator->validate();
 
