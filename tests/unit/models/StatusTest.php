@@ -1,4 +1,6 @@
-<?php declare(strict_types=1);
+<?php
+
+declare(strict_types=1);
 /**
  * @author Nicolas CARPi <nico-git@deltablot.email>
  * @copyright 2012 Nicolas CARPi
@@ -10,6 +12,7 @@
 namespace Elabftw\Models;
 
 use Elabftw\Enums\Action;
+use Elabftw\Models\Users\Users;
 
 class StatusTest extends \PHPUnit\Framework\TestCase
 {
@@ -31,14 +34,14 @@ class StatusTest extends \PHPUnit\Framework\TestCase
         $this->assertIsArray($this->Status->readOne());
     }
 
-    public function testGetPage(): void
+    public function testGetApiPath(): void
     {
-        $this->assertIsString($this->Status->getPage());
+        $this->assertIsString($this->Status->getApiPath());
     }
 
     public function testUpdate(): void
     {
-        $id = $this->Status->postAction(Action::Create, array('title' => 'Yop', 'color' => '#29AEB9'));
+        $id = $this->Status->postAction(Action::Create, array('title' => 'Yop', 'color' => '#29AEB9', 'is_private' => 0));
         $Status = new ExperimentsStatus(new Teams(new Users(1, 1), 1), $id);
         $status = $Status->patch(Action::Update, array('title' => 'Updated', 'color' => '#121212'));
         $this->assertEquals('Updated', $status['title']);

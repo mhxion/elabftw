@@ -1,4 +1,6 @@
-<?php declare(strict_types=1);
+<?php
+
+declare(strict_types=1);
 /**
  * @author Nicolas CARPi <nico-git@deltablot.email>
  * @copyright 2012 Nicolas CARPi
@@ -9,13 +11,17 @@
 
 namespace Elabftw\Elabftw;
 
-use function dirname;
-
+use Elabftw\Enums\Messages;
+use Elabftw\Exceptions\DemoModeException;
 use Elabftw\Exceptions\IllegalActionException;
 use Elabftw\Exceptions\ImproperActionException;
+use Elabftw\Params\UserParams;
 use Elabftw\Services\Check;
+use Elabftw\Services\TeamsHelper;
 use Exception;
 use Symfony\Component\HttpFoundation\RedirectResponse;
+
+use function dirname;
 
 require_once dirname(__DIR__) . '/init.inc.php';
 
@@ -26,6 +32,10 @@ try {
     // check for disabled local register
     if ($App->Config->configArr['local_register'] === '0') {
         throw new ImproperActionException(_('Registration is disabled.'));
+    }
+    // or we might be in demo mode
+    if ($App->demoMode) {
+        throw new DemoModeException();
     }
 
     // Stop bot registration by checking if the (invisible to humans) bot input is filled
@@ -42,13 +52,17 @@ try {
         throw new ImproperActionException(_('A mandatory field is missing!'));
     }
 
+    // Check that the user is being added to a team available in team addition dropdowns.
+    $teamsHelper = new TeamsHelper($App->Request->request->getInt('team'));
+    $teamsHelper->teamIsVisibleOrExplode();
+
     // Create user
     $App->Users->createOne(
-        (new UserParams('email', $App->Request->request->getString('email')))->getContent(),
+        (new UserParams('email', $App->Request->request->getString('email')))->getStringContent(),
         array($App->Request->request->getInt('team')),
-        (new UserParams('firstname', $App->Request->request->getString('firstname')))->getContent(),
-        (new UserParams('lastname', $App->Request->request->getString('lastname')))->getContent(),
-        (new UserParams('password', $App->Request->request->getString('password')))->getContent(),
+        (new UserParams('firstname', $App->Request->request->getString('firstname')))->getStringContent(),
+        (new UserParams('lastname', $App->Request->request->getString('lastname')))->getStringContent(),
+        (new UserParams('password', $App->Request->request->getString('password')))->getStringContent(),
     );
 
     if ($App->Users->needValidation) {
@@ -58,18 +72,18 @@ try {
     }
     // store the email here so we can put it in the login field
     $App->Session->set('email', $App->Request->request->getString('email'));
+} catch (IllegalActionException $e) {
+    $App->Log->notice('', array(array('userid' => $App->Session->get('userid')), array('IllegalAction', $e->getMessage())));
+    $App->Session->getFlashBag()->add('ko', Messages::InsufficientPermissions->toHuman());
+    $location = '/register.php';
 } catch (ImproperActionException $e) {
     // show message to user
     $App->Session->getFlashBag()->add('ko', $e->getMessage());
     $location = '/register.php';
-} catch (IllegalActionException $e) {
-    $App->Log->notice('', array(array('userid' => $App->Session->get('userid')), array('IllegalAction', $e->getMessage())));
-    $App->Session->getFlashBag()->add('ko', Tools::error(true));
-    $location = '/register.php';
 } catch (Exception $e) {
     // log error and show general error message
     $App->Log->error('', array('Exception' => $e));
-    $App->Session->getFlashBag()->add('ko', Tools::error());
+    $App->Session->getFlashBag()->add('ko', Messages::GenericError->toHuman());
     $location = '/register.php';
 } finally {
     $Response = new RedirectResponse($location);

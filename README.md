@@ -10,8 +10,7 @@
 
 [![CircleCI](https://circleci.com/gh/elabftw/elabftw/tree/master.svg?style=svg)](https://circleci.com/gh/elabftw/elabftw/tree/master)
 
-[![Scrutinizer Code Quality](https://scrutinizer-ci.com/g/elabftw/elabftw/badges/quality-score.png?b=master)](https://scrutinizer-ci.com/g/elabftw/elabftw/?branch=master)
-[![Code Coverage](https://scrutinizer-ci.com/g/elabftw/elabftw/badges/coverage.png?b=master)](https://scrutinizer-ci.com/g/elabftw/elabftw/?branch=master)
+[![Code Coverage](https://codecov.io/gh/elabftw/elabftw/branch/hypernext/graph/badge.svg?token=SHSZuaxt17)](https://codecov.io/gh/elabftw/elabftw)
 [![CII Best Practices](https://bestpractices.coreinfrastructure.org/projects/2766/badge)](https://bestpractices.coreinfrastructure.org/projects/2766)
 [![Join the chat at https://gitter.im/elabftw/elabftw](https://badges.gitter.im/elabftw/elabftw.svg)](https://gitter.im/elabftw/elabftw?utm_source=badge&utm_medium=badge&utm_campaign=pr-badge&utm_content=badge)
 [![License](https://img.shields.io/badge/license-AGPL-blue.svg)](https://www.gnu.org/licenses/agpl-3.0.en.html)
@@ -32,19 +31,20 @@ It is accessed _via_ the browser. Several research teams can be hosted on the sa
 ## Features
 
 * Lab notebook for experiments
-* Database for lab reagents, equipment, storage, cell lines, etc...
+* Database for resources (lab reagents, equipment, storage, cell lines, chemical products, etc...)
 * Trusted timestamping
 * Blockchain timestamping
 * Import and export in various formats
 * Calendar to manage booking of equipment
 * Support for various scientific file formats
-* Molecule/equation editor
+* Molecule editor
 * LaTeX support
 * Todolist
 * Public REST API
-* Available in 17 languages
+* Available in 21 languages
 * Advanced permissions system
 * Audited, secure codebase suitable for sensitive research results
+* Self contained service that doesn't leak data to third party
 
 ## How it works
 
@@ -62,7 +62,7 @@ The documentation explains everything:
 
 # Contributing
 
-**eLabFTW** is a collaborative project. Your contributions are very welcome! Have a look at the [contributing page](https://doc.elabftw.net/contributing.html) to see how you can help with translation or code.
+**eLabFTW** is a collaborative project. Your contributions are very welcome! Have a look at the [contributing page](https://doc.elabftw.net/docs/contributing/intro) to see how you can help with translation or code.
 
 # Security
 
@@ -111,30 +111,56 @@ This project is backed by [Deltablot](https://www.deltablot.com) company.
 * Institut Curie – Centre de Recherche
 * Vrije Universiteit Brussel
 * Institute of Medical Biometry and Statistics, Faculty of Medicine and Medical Center – University of Freiburg, Germany
+* Georg-August-University Goettingen - Institute of Inorganic Chemistry
+* [Lablynx](https://www.lablynx.com/)
 
 # Related projects
 
 ## API libraries
 
 * [elabftw/elabapi-python](https://github.com/elabftw/elabapi-python/): python library for interacting with APIv2
-* [elabftw/elabapy](https://github.com/elabftw/elabapy): python library for interacting with APIv1 (deprecated)
 * [elabftw/elabapi-javascript-example](https://github.com/elabftw/elabapi-javascript-example#readme): example code for interacting with APIv2 through JavaScript
 
 ## Communities
 
 * [The ELN Consortium](https://github.com/TheELNConsortium/): a consortium of ELN vendors interested in improving interoperability between ELNs
 
+## Importing data from another ELN
+
+* [Importing data from RSpace](https://github.com/elabftw/rspace2elabftw): A python script to import .eln files from RSpace into eLabFTW
+* [Importing data from LabFolder](https://github.com/TheELNConsortium/any2eln): A python script to import data from LabFolder into eLabFTW, using their API
+
 ## Third party libraries or scripts
 
 These projects were created by users of eLabFTW, check them out if interested!
 
+* [elAPI](https://github.com/uhd-urz/elAPI/): a powerful, extensible API client for eLabFTW developed at the University Computing Centre of University of Heidelberg
+* [pyelabdata](https://github.com/FAU-PHYSIK-EP/pyelabdata): provides functions for simple one-line access to data stored in eLabFTW via Python
+* [elabftw-teamupload](https://github.com/HeFDI-DE/elabftw-teamupload/): Synchronize teamgroups and teams with users from Excel
+* [Reporting Dashboard](https://git.rwth-aachen.de/eln-rwth/reporting-scripts-public): Collection of scripts to create a reporting dashabord for eLabFTW SysAdmins
+
+### Deprecated projects using retired api v1
 * [din14970/elabftwqrprint](https://github.com/din14970/elabftwqrprint): python library to print QR codes from database objects
 * [shabihsherjeel/nionswift_elabftw_plugin](https://github.com/shabihsherjeel/nionswift_elabftw_plugin): python plugin for [Nionswift](https://github.com/nion-software/nionswift)
 * [iam-cms/elabapy-cli](https://gitlab.com/iam-cms/workflows/extra-nodes/elabapy-cli): command line interface for eLabFTW API
 * [Elab::Client](https://metacpan.org/pod/ELab::Client): perl module for eLab API by Andreas K. Hüttel
 * [LabView client](https://www.vipm.io/package/plasmapper_lib_pl_elabftw_client/): LabView client library by @plasmapper
 * [Matlab client](https://github.com/baillon/eLabAPI): Matlab package to facilitate working with eLabFTW API
-* [elabftw-teamupload](https://github.com/HeFDI-DE/elabftw-teamupload/): Synchronize teamgroups and teams with users from Excel
 
+
+## Unofficial documentation
+
+* [TU Graz support page](https://www.tugraz.at/sites/rdm/tools/elabftw/elabftw-support)
+* [HeFDI eLabFTW Tutorials](https://ilias.uni-marburg.de/goto.php?target=crs_3174359&client_id=UNIMR)
+
+## Contributors
+
+<a href="https://github.com/elabftw/elabftw/graphs/contributors">
+  <img src="https://contrib.rocks/image?repo=elabftw/elabftw" />
+</a>
+
+Made with [contrib.rocks](https://contrib.rocks).
+
+## <3
 
 Thank you for using **eLabFTW**. I hope it will bring happiness to your lab ;)

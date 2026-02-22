@@ -1,4 +1,5 @@
-<?php declare(strict_types=1);
+<?php
+
 /**
  * @package   Elabftw\Elabftw
  * @author    Nicolas CARPi <nico-git@deltablot.email>
@@ -7,11 +8,15 @@
  * @see       https://www.elabftw.net Official website
  */
 
+declare(strict_types=1);
+
 namespace Elabftw\Make;
 
 use Elabftw\Interfaces\StringMakerInterface;
-use League\Csv\Reader;
+use League\Csv\Bom;
 use League\Csv\Writer;
+use Override;
+
 use function strlen;
 
 /**
@@ -21,9 +26,12 @@ abstract class AbstractMakeCsv extends AbstractMake implements StringMakerInterf
 {
     protected string $contentType = 'text/csv; charset=UTF-8';
 
+    protected array $rows;
+
     /**
      * Create a CSV file from header and rows
      */
+    #[Override]
     public function getFileContent(): string
     {
         // load the CSV document from a string
@@ -33,10 +41,11 @@ abstract class AbstractMakeCsv extends AbstractMake implements StringMakerInterf
         $csv->insertOne($this->getHeader());
 
         // insert all the records
+        /** @psalm-suppress PossiblyInvalidArgument */
         $csv->insertAll($this->getRows());
 
         // add UTF8 BOM
-        $csv->setOutputBOM(Reader::BOM_UTF8);
+        $csv->setOutputBOM(Bom::Utf8);
 
         $content = $csv->toString();
         // mb_strlen doesn't give correct size
@@ -44,10 +53,10 @@ abstract class AbstractMakeCsv extends AbstractMake implements StringMakerInterf
         return $content;
     }
 
-    /**
-     * Get the column names
-     */
-    abstract protected function getHeader(): array;
+    protected function getHeader(): array
+    {
+        return array_keys($this->rows[0]);
+    }
 
     /**
      * Get all the rows

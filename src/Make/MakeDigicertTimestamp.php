@@ -1,4 +1,5 @@
-<?php declare(strict_types=1);
+<?php
+
 /**
  * @author Nicolas CARPi <nico-git@deltablot.email>
  * @copyright 2021 Nicolas CARPi
@@ -7,7 +8,11 @@
  * @package elabftw
  */
 
+declare(strict_types=1);
+
 namespace Elabftw\Make;
+
+use Override;
 
 use function dirname;
 
@@ -15,19 +20,20 @@ use function dirname;
  * RFC3161 timestamping with Digicert timestamping service
  * https://knowledge.digicert.com/generalinformation/INFO4231.html
  */
-class MakeDigicertTimestamp extends AbstractMakeTrustedTimestamp
+final class MakeDigicertTimestamp extends AbstractMakeTrustedTimestamp
 {
-    protected const TS_URL = 'http://timestamp.digicert.com';
+    protected const string TS_URL = 'http://timestamp.digicert.com';
 
-    protected const TS_CERT = 'digicert.pem';
+    protected const string TS_CERT = 'digicert.pem';
 
-    protected const TS_HASH = 'sha256';
+    protected const string TS_HASH = 'sha256';
 
     /**
      * Return the needed parameters to request/verify a timestamp
      *
      * @return array<string,string>
      */
+    #[Override]
     public function getTimestampParameters(): array
     {
         return array(
@@ -38,6 +44,6 @@ class MakeDigicertTimestamp extends AbstractMakeTrustedTimestamp
             'ts_hash' => self::TS_HASH,
             // digicert root cert is already in the trusted certs list provided by ca-certificates package
             'ts_chain' => '/etc/ssl/cert.pem',
-            );
+        );
     }
 }

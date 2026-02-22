@@ -5,43 +5,198 @@
  * @license AGPL-3.0
  * @package elabftw
  */
-import { notif, notifError, reloadElement, updateCatStat } from './misc';
+import {
+  collectForm,
+  getSafeElementById,
+  mkSpin,
+  mkSpinStop,
+  permissionsToJson,
+  reloadElements,
+  TomSelect,
+} from './misc';
 import $ from 'jquery';
 import { Malle } from '@deltablot/malle';
-import i18next from 'i18next';
-import { MdEditor } from './Editor.class';
-import { Api } from './Apiv2.class';
-import { EntityType, Model, Action } from './interfaces';
+import i18next from './i18n';
+import { getEditor } from './Editor.class';
+import { ApiC } from './api';
+import { Model, Action, Selected } from './interfaces';
 import tinymce from 'tinymce/tinymce';
-import { getTinymceBaseConfig } from './tinymce';
-import Tab from './Tab.class';
+import { notify } from './notify';
+import { on } from './handlers';
 
-document.addEventListener('DOMContentLoaded', () => {
-  if (window.location.pathname !== '/admin.php') {
-    return;
-  }
-  const ApiC = new Api();
-
-  const TabMenu = new Tab();
-  TabMenu.init(document.querySelector('.tabbed-menu'));
-
-  // activate editor for common template
-  tinymce.init(getTinymceBaseConfig('admin'));
-  // and for md
-  (new MdEditor()).init();
-
-  $('#team_groups_div').on('click', '.teamGroupDelete', function() {
-    if (confirm(i18next.t('generic-delete-warning'))) {
-      ApiC.delete(`${Model.Team}/current/${Model.TeamGroup}/${$(this).data('id')}`).then(() => reloadElement('team_groups_div'));
+function collectSelectable(name: string): number[] {
+  const collected = [];
+  document.querySelectorAll(`#batchActions input[name=${name}]`).forEach(input => {
+    const box = input as HTMLInputElement;
+    if (box.checked) {
+      collected.push(parseInt((input as HTMLInputElement).value, 10));
     }
   });
+  return collected;
+}
 
+function collectInt(name: string): number {
+  return parseInt((getSafeElementById(name) as HTMLInputElement).value, 10);
+}
 
-  $('#team_groups_div').on('click', '.rmUserFromGroup', function() {
-    const user = $(this).data('user');
-    const group = $(this).data('group');
-    ApiC.patch(`${Model.Team}/current/${Model.TeamGroup}/${group}`, {'how': Action.Unreference, 'userid': user}).then(() => reloadElement('team_groups_div'));
+function collectCan(): string {
+  // Warning: copy pasta from common.ts save-permissions action
+  // collect existing users listed in ul->li, and store them in a string[] with user:<userid>
+  const existingUsers = Array.from(document.getElementById('masscan_list_users').children)
+    .map(u => `user:${(u as HTMLElement).dataset.id}`);
+
+  return permissionsToJson(
+    Array.from((document.getElementById('masscan_select_teams') as HTMLSelectElement).selectedOptions).map(v=>v.value)
+      .concat(Array.from((document.getElementById('masscan_select_teamgroups') as HTMLSelectElement).selectedOptions).map(v=>v.value))
+      .concat(existingUsers),
+  );
+}
+
+function getSelected(): Selected {
+  return {
+    items_categories: collectSelectable('items_categories'),
+    items_status: collectSelectable('items_status'),
+    items_tags: collectSelectable('items_tags'),
+    experiments_status: collectSelectable('experiments_status'),
+    experiments_categories: collectSelectable('experiments_categories'),
+    experiments_tags: collectSelectable('experiments_tags'),
+    tags: collectSelectable('tags'),
+    users_experiments: collectSelectable('users-experiments'),
+    users_resources: collectSelectable('users-resources'),
+    userid: collectInt('targetUserId'),
+    team: collectInt('targetTeamId'),
+    can: collectCan(),
+    can_base: parseInt((document.getElementById('masscan_select_base') as HTMLSelectElement).value, 10),
+  };
+}
+
+// RUN ACTION ON SELECTED (BATCH)
+on('run-action-selected', (el: HTMLElement) => {
+  const btn = el as HTMLButtonElement;
+  const selected = getSelected();
+  if (!Object.values(selected).some(array => array.length > 0)) {
+    notify.error('nothing-selected');
+    return;
+  }
+  const oldHTML = mkSpin(btn);
+  selected['action'] = btn.dataset.what;
+  // we use a custom notif message, so disable the native one
+  ApiC.notifOnSaved = false;
+  ApiC.post('batch', selected).then(res => {
+    const processed = res.headers.get('location').split('/').pop();
+    notify.success('entries-processed', { num: processed });
+  }).finally(() => {
+    mkSpinStop(btn, oldHTML);
   });
+});
+
+on('update-counter-value', (el: HTMLElement) => {
+  const counterValue = el.parentElement.parentElement.parentElement.previousElementSibling.querySelector('.counterValue');
+  const box = el as HTMLInputElement;
+  let count = parseInt(counterValue.textContent, 10);
+  if (box.checked) {
+    count += 1;
+  } else {
+    count -= 1;
+  }
+  counterValue.textContent = String(count);
+});
+
+on('create-teamgroup', (_, event: Event) => {
+  event.preventDefault();
+  const form = document.getElementById('createGroupForm') as HTMLFormElement;
+  const params = collectForm(form);
+  ApiC.post(`${Model.Team}/current/${Model.TeamGroup}`, params).then(() => {
+    reloadElements(['team_groups_div']);
+    form.reset();
+  });
+});
+
+on('adduser-teamgroup', (el: HTMLElement, event: Event) => {
+  event.preventDefault();
+  const user = parseInt(el.parentNode.parentNode.querySelector('input').value, 10);
+  if (isNaN(user)) {
+    notify.error('add-user-error');
+    return;
+  }
+  ApiC.patch(
+    `${Model.Team}/current/${Model.TeamGroup}/${el.dataset.groupid}`,
+    {how: Action.Add, userid: user},
+  ).then(() => reloadElements(['team_groups_div']));
+});
+
+on('rmuser-teamgroup', (el: HTMLElement) => {
+  ApiC.patch(`${Model.Team}/current/${Model.TeamGroup}/${el.dataset.groupid}`, {how: Action.Unreference, userid: el.dataset.userid})
+    .then(() => el.parentElement.remove());
+});
+
+on('destroy-teamgroup', (el: HTMLElement) => {
+  if (confirm(i18next.t('generic-delete-warning'))) {
+    ApiC.delete(`${Model.Team}/current/${Model.TeamGroup}/${el.dataset.id}`)
+      .then(() => el.parentElement.remove());
+  }
+});
+
+on('export-category', () => {
+  const source = (document.getElementById('categoryExport') as HTMLSelectElement).value;
+  const format = (document.getElementById('categoryExportFormat') as HTMLSelectElement).value;
+  window.location.href = `make.php?format=${encodeURIComponent(format)}&category=${encodeURIComponent(source)}&type=items`;
+});
+
+on('export-user', () => {
+  const source = (document.getElementById('userExport') as HTMLSelectElement).value;
+  const format = (document.getElementById('userExportFormat') as HTMLSelectElement).value;
+  window.location.href = `make.php?format=${encodeURIComponent(format)}&owner=${encodeURIComponent(source)}&type=experiments`;
+});
+
+on('admin-add-tag', () => {
+  const tagInput = (document.getElementById('adminAddTagInput') as HTMLInputElement);
+  if (!tagInput.value) {
+    return;
+  }
+  ApiC.post(`${Model.Team}/current/${Model.Tag}`, {tag: tagInput.value}).then(() => {
+    tagInput.value = '';
+    reloadElements(['tagMgrDiv']);
+  });
+});
+
+if (window.location.pathname === '/admin.php') {
+  on('patch-newcomer_banner', () => {
+    const params = {};
+    params['newcomer_banner'] = tinymce.get('newcomer_banner').getContent();
+    ApiC.patch(`${Model.Team}/current`, params);
+  });
+
+  on('patch-onboarding-email', () => {
+    const key = 'onboarding_email_body';
+    ApiC.patch(`${Model.Team}/current`, {
+      [key]: tinymce.get(key).getContent(),
+    });
+  });
+
+  on('open-onboarding-email-modal', () => {
+    // reload the modal in case the users of the team have changed
+    reloadElements(['sendOnboardingEmailModal'])
+      .then(() => $('#sendOnboardingEmailModal').modal('toggle'))
+      .then(() => new TomSelect('#sendOnboardingEmailToUsers', {
+        plugins: ['dropdown_input', 'no_active_items', 'remove_button'],
+      }));
+  });
+
+  on('send-onboarding-emails', () => {
+    ApiC.notifOnSaved = false;
+    ApiC.patch(`${Model.Team}/current`, {
+      'action': Action.SendOnboardingEmails,
+      'userids': Array.from((document.getElementById('sendOnboardingEmailToUsers') as HTMLSelectElement).selectedOptions)
+        .map(option => parseInt(option.value, 10)),
+    }).then(response => {
+      if (response.ok) {
+        notify.success('onboarding-email-sent');
+      }
+    });
+  });
+
+  getEditor().init('admin');
 
   // edit the team group name
   const malleableGroupname = new Malle({
@@ -50,7 +205,7 @@ document.addEventListener('DOMContentLoaded', () => {
     inputClasses: ['form-control'],
     formClasses: ['mb-3'],
     fun: async (value, original) => {
-      return ApiC.patch(`${Model.Team}/current/${Model.TeamGroup}/${original.dataset.id}`, {'name': value})
+      return ApiC.patch(`${Model.Team}/current/${Model.TeamGroup}/${original.dataset.id}`, {name: value})
         .then(resp => resp.json()).then(json => json.name);
     },
     listenOn: '.malleableTeamgroupName',
@@ -64,144 +219,4 @@ document.addEventListener('DOMContentLoaded', () => {
   new MutationObserver(() => {
     malleableGroupname.listen();
   }).observe(document.getElementById('team_groups_div'), {childList: true});
-
-  // UPDATE
-  function itemsTypesUpdate(id: number): Promise<Response> {
-    const nameInput = (document.getElementById('itemsTypesName') as HTMLInputElement);
-    const name = nameInput.value;
-    if (name === '') {
-      notif({'res': false, 'msg': 'Name cannot be empty'});
-      nameInput.style.borderColor = 'red';
-      nameInput.focus();
-      return;
-    }
-    const color = (document.getElementById('itemsTypesColor') as HTMLInputElement).value;
-    const body = tinymce.get('itemsTypesBody').getContent();
-    const params = {'title': name, 'color': color, 'body': body};
-    return ApiC.patch(`${EntityType.ItemType}/${id}`, params);
-  }
-  // END ITEMS TYPES
-
-  function getRandomColor(): string {
-    return `#${Math.floor(Math.random()*16777215).toString(16)}`;
-  }
-
-  // set a random color to all the "create new" statuslike modals
-  // from https://www.paulirish.com/2009/random-hex-color-code-snippets/
-  document.querySelectorAll('.randomColor').forEach((input: HTMLInputElement) => {
-    input.value = getRandomColor();
-  });
-
-  // CATEGORY SELECT
-  $(document).on('change', '.catstatSelect', function() {
-    const url = new URL(window.location.href);
-    const queryParams = new URLSearchParams(url.search);
-    updateCatStat($(this).data('target'), {type: EntityType.ItemType, id: parseInt(queryParams.get('templateid'), 10)}, String($(this).val()));
-  });
-
-  document.getElementById('container').addEventListener('click', event => {
-    const el = (event.target as HTMLElement);
-    // CREATE ITEMS TYPES
-    if (el.matches('[data-action="itemstypes-create"]')) {
-      const title = prompt(i18next.t('template-title'));
-      if (title) {
-        // no body on template creation
-        ApiC.post(EntityType.ItemType, {'title': title}).then(resp => window.location.href = resp.headers.get('location') + '#itemsCategoriesAnchor');
-      }
-    // UPDATE ITEMS TYPES
-    } else if (el.matches('[data-action="itemstypes-update"]')) {
-      itemsTypesUpdate(parseInt(el.dataset.id, 10));
-    // DESTROY ITEMS TYPES
-    } else if (el.matches('[data-action="itemstypes-destroy"]')) {
-      if (confirm(i18next.t('generic-delete-warning'))) {
-        ApiC.delete(`${EntityType.ItemType}/${el.dataset.id}`).then(() => window.location.href = '?tab=4');
-      }
-    // CREATE TEAM GROUP
-    } else if (el.matches('[data-action="create-teamgroup"]')) {
-      const input = (document.getElementById('teamGroupCreate') as HTMLInputElement);
-      ApiC.post(`${Model.Team}/current/${Model.TeamGroup}`, {'name': input.value}).then(() => {
-        reloadElement('team_groups_div');
-        input.value = '';
-      });
-    // ADD USER TO TEAM GROUP
-    } else if (el.matches('[data-action="adduser-teamgroup"]')) {
-      const user = parseInt(el.parentNode.parentNode.querySelector('input').value, 10);
-      if (isNaN(user)) {
-        notifError(new Error('Use the autocompletion menu to add users.'));
-        return;
-      }
-      ApiC.patch(`${Model.Team}/current/${Model.TeamGroup}/${el.dataset.groupid}`, {'how': Action.Add, 'userid': user}).then(() => reloadElement('team_groups_div'));
-    // CREATE STATUSLIKE
-    } else if (el.matches('[data-action="create-statuslike"]')) {
-      const holder = el.parentElement.parentElement;
-      const colorInput = (holder.querySelector('input[type="color"]') as HTMLInputElement);
-      const nameInput = (holder.querySelector('input[type="text"]') as HTMLInputElement);
-      const name = nameInput.value;
-      if (!name) {
-        notifError(new Error('Invalid status name'));
-        // set the border in red to bring attention
-        nameInput.style.borderColor = 'red';
-        return;
-      }
-      ApiC.post(`${Model.Team}/current/${el.dataset.target}`, {'name': name, 'color': colorInput.value}).then(() => {
-        $(`#create${el.dataset.target}Modal`).modal('hide');
-        // clear the name
-        nameInput.value = '';
-        // assign a new random color
-        colorInput.value = getRandomColor();
-        // display newly added entry
-        reloadElement(`${el.dataset.target}Div`);
-      });
-    // UPDATE STATUSLIKE
-    } else if (el.matches('[data-action="update-status"]')) {
-      const id = el.dataset.id;
-      let target = Model.ExperimentsStatus;
-      if (el.dataset.target === 'items') {
-        target = Model.ItemsStatus;
-      }
-      if (el.dataset.target === 'expcat') {
-        target = Model.ExperimentsCategories;
-      }
-      const holder = el.parentElement.parentElement;
-      const title = (holder.querySelector('input[type="text"]') as HTMLInputElement).value;
-      const color = (holder.querySelector('input[type="color"]') as HTMLInputElement).value;
-      const isDefault = (holder.querySelector('input[type="radio"]') as HTMLInputElement).checked;
-      const params = {'title': title, 'color': color, 'is_default': Boolean(isDefault)};
-      ApiC.patch(`${Model.Team}/current/${target}/${id}`, params);
-    // DESTROY CATEGORY/STATUS
-    } else if (el.matches('[data-action="destroy-catstat"]')) {
-      if (confirm(i18next.t('generic-delete-warning'))) {
-        ApiC.delete(`${Model.Team}/current/${el.dataset.target}/${el.dataset.id}`).then(() => reloadElement(`${el.dataset.target}Div`));
-      }
-    // EXPORT CATEGORY
-    } else if (el.matches('[data-action="export-category"]')) {
-      const source = (document.getElementById('categoryExport') as HTMLSelectElement).value;
-      const format = (document.getElementById('categoryExportFormat') as HTMLSelectElement).value;
-      window.location.href = `make.php?format=${format}&category=${source}&type=items`;
-
-    // ADD TAG
-    } else if (el.matches('[data-action="admin-add-tag"]')) {
-      const tagInput = (document.getElementById('adminAddTagInput') as HTMLInputElement);
-      if (!tagInput.value) {
-        return;
-      }
-      ApiC.post(`${Model.TeamTags}`, {'tag': tagInput.value}).then(() => {
-        tagInput.value = '';
-        reloadElement('tagMgrDiv');
-      });
-    } else if (el.matches('[data-action="patch-team-common-template"]')) {
-      const params = {};
-      params['common_template'] = tinymce.get('common_template').getContent();
-      params['common_template_md'] = (document.getElementById('common_template_md') as HTMLTextAreaElement).value;
-      ApiC.patch(`${Model.Team}/current`, params);
-    } else if (el.matches('[data-action="patch-team-common-template-md"]')) {
-      const params = {};
-      params['common_template_md'] = (document.getElementById('common_template_md') as HTMLTextAreaElement).value;
-      ApiC.patch(`${Model.Team}/current`, params);
-    } else if (el.matches('[data-action="export-scheduler"]')) {
-      const from = (document.getElementById('schedulerDateFrom') as HTMLSelectElement).value;
-      const to = (document.getElementById('schedulerDateTo') as HTMLSelectElement).value;
-      window.location.href = `make.php?format=schedulerReport&start=${from}&end=${to}`;
-    }
-  });
-});
+}

@@ -1,4 +1,6 @@
-<?php declare(strict_types=1);
+<?php
+
+declare(strict_types=1);
 /**
  * @author Nicolas CARPi <nico-git@deltablot.email>
  * @author Marcel Bolten <github@marcelbolten.de>
@@ -10,7 +12,7 @@
 
 namespace Elabftw\Models;
 
-use Elabftw\Enums\Action;
+use Elabftw\Models\Users\Users;
 
 class ExtraFieldsKeysTest extends \PHPUnit\Framework\TestCase
 {
@@ -35,9 +37,6 @@ class ExtraFieldsKeysTest extends \PHPUnit\Framework\TestCase
     {
         $ExtraFieldsKeys = new ExtraFieldsKeys($this->Users, '');
         $this->assertIsArray($ExtraFieldsKeys->readOne());
-        $this->assertIsArray($ExtraFieldsKeys->patch(Action::Update, array()));
-        $this->assertEquals(0, $ExtraFieldsKeys->postAction(Action::Create, array()));
-        $this->assertEquals('extra_fields_keys', $ExtraFieldsKeys->getPage());
-        $this->assertFalse($ExtraFieldsKeys->destroy());
+        $this->assertEquals('api/v2/extra_fields_keys/', $ExtraFieldsKeys->getApiPath());
     }
 }

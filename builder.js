@@ -15,6 +15,7 @@ const path = require('path');
 const MiniCssExtractPlugin = require('mini-css-extract-plugin');
 const CssMinimizerPlugin = require('css-minimizer-webpack-plugin');
 const TerserPlugin = require('terser-webpack-plugin');
+const webpack = require('webpack');
 
 module.exports = (env) => {
   return {
@@ -22,11 +23,19 @@ module.exports = (env) => {
       main: [
         './src/scss/main.scss',
         './src/ts/common.ts',
+        './src/ts/create-new.ts',
         './src/ts/i18n.ts',
         './src/ts/steps-links.ts',
+        './src/ts/chem-editor.ts',
+        './src/ts/dspace.ts',
+        './src/ts/ketcher-editor.jsx',
+        './src/ts/compounds-table.jsx',
+        './src/ts/users-table.jsx',
         './src/ts/tags.ts',
         './src/ts/admin.ts',
+        './src/ts/profile.ts',
         './src/ts/edit.ts',
+        './src/ts/scheduler.ts',
         './src/ts/team.ts',
         './src/ts/metadata.ts',
         './src/ts/uploads.ts',
@@ -36,15 +45,16 @@ module.exports = (env) => {
         './src/ts/revisions.ts',
         './src/ts/toolbar.ts',
         './src/ts/editusers.ts',
-        './src/ts/search.ts',
         './src/ts/show.ts',
         './src/ts/sysconfig.ts',
+        './src/ts/opencloning.ts',
         'bootstrap/js/src/alert.js',
         'bootstrap/js/src/button.js',
         'bootstrap/js/src/collapse.js',
         'bootstrap/js/src/dropdown.js',
         './src/ts/mathjax.ts',
         'prismjs',
+        './src/ts/prism-igor.ts',
         // see list in tinymce.ts for codesample plugin settings
         'prismjs/components/prism-bash.js',
         'prismjs/components/prism-c.js',
@@ -65,11 +75,15 @@ module.exports = (env) => {
         'prismjs/components/prism-python.js',
         'prismjs/components/prism-r.js',
         'prismjs/components/prism-ruby.js',
+        'prismjs/components/prism-rust.js',
         'prismjs/components/prism-sql.js',
         'prismjs/components/prism-tcl.js',
         'prismjs/components/prism-vhdl.js',
         'prismjs/components/prism-yaml.js',
-        './src/js/vendor/keymaster.js',
+      ],
+      spreadsheet: [
+        './src/ts/spreadsheet-editor.jsx',
+        './src/ts/spreadsheet-utils.ts',
       ],
     },
     // uncomment this to find where the error is coming from
@@ -97,9 +111,18 @@ module.exports = (env) => {
           filename: 'vendor.min.css',
         }
       ),
+      // required to make process work in the browser
+      new webpack.ProvidePlugin({
+        process: 'process/browser.js',
+      }),
     ],
     resolve: {
-      extensions: ['.ts', '.js'],
+      extensions: ['.ts', '.js', '.jsx'],
+      fallback: {
+        // required by react 18
+        process: require.resolve('process/browser'),
+        util: require.resolve('util/'),
+      },
     },
     module: {
       rules:[
@@ -120,6 +143,10 @@ module.exports = (env) => {
             'css-loader',
           ],
         },
+        {
+          test: /\.jsx?$/,
+          use: ["babel-loader"]
+        },
         { // SASS loader
           test: /\.scss$/,
           type: 'asset/resource',
@@ -138,14 +165,6 @@ module.exports = (env) => {
           loader: 'expose-loader',
           options: {
             exposes: ['$', 'jQuery'],
-          },
-        },
-        // expose key for keymaster globally
-        {
-          test: /keymaster.js/,
-          loader: 'expose-loader',
-          options: {
-            exposes: 'key',
           },
         }
       ]

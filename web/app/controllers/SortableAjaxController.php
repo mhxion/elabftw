@@ -1,4 +1,6 @@
-<?php declare(strict_types=1);
+<?php
+
+declare(strict_types=1);
 /**
  * @author Nicolas CARPi <nico-git@deltablot.email>
  * @copyright 2012 Nicolas CARPi
@@ -9,10 +11,9 @@
 
 namespace Elabftw\Elabftw;
 
-use function dirname;
+use Elabftw\Enums\Messages;
 use Elabftw\Enums\Orderable;
 use Elabftw\Exceptions\DatabaseErrorException;
-use Elabftw\Exceptions\FilesystemErrorException;
 use Elabftw\Exceptions\IllegalActionException;
 use Elabftw\Exceptions\ImproperActionException;
 use Elabftw\Exceptions\UnauthorizedException;
@@ -22,12 +23,17 @@ use Elabftw\Models\ExperimentsStatus;
 use Elabftw\Models\Items;
 use Elabftw\Models\ItemsStatus;
 use Elabftw\Models\ItemsTypes;
+use Elabftw\Models\ResourcesCategories;
 use Elabftw\Models\Teams;
 use Elabftw\Models\Templates;
 use Elabftw\Models\Todolist;
+use Elabftw\Params\ExtraFieldsOrderingParams;
+use Elabftw\Params\OrderingParams;
 use Exception;
 use JsonException;
 use Symfony\Component\HttpFoundation\JsonResponse;
+
+use function dirname;
 
 /**
  * Update ordering of various things
@@ -43,7 +49,7 @@ $Response->setData(array(
 try {
     // decode JSON payload
     try {
-        $reqBody = json_decode((string) $App->Request->getContent(), true, 5, JSON_THROW_ON_ERROR);
+        $reqBody = json_decode($App->Request->getContent(), true, 5, JSON_THROW_ON_ERROR);
     } catch (JsonException) {
         throw new ImproperActionException('Error decoding JSON payload');
     }
@@ -51,7 +57,7 @@ try {
     // extra fields position update
     if ($reqBody['table'] === 'extra_fields') {
         $OrderingParams = new ExtraFieldsOrderingParams($reqBody);
-        $Entity = $OrderingParams->type->toInstance($App->Users, $OrderingParams->id);
+        $Entity = $OrderingParams->entityType->toInstance($App->Users, $OrderingParams->id);
         $Entity->updateExtraFieldsOrdering($OrderingParams);
         $Response->send();
         exit;
@@ -64,8 +70,8 @@ try {
         case Orderable::ExperimentsCategories:
             $Entity = new ExperimentsCategories(new Teams($App->Users));
             break;
-        case Orderable::ItemsTypes:
-            $Entity = new ItemsTypes($App->Users);
+        case Orderable::ResourcesCategories:
+            $Entity = new ResourcesCategories(new Teams($App->Users));
             break;
         case Orderable::ExperimentsStatus:
             $Entity = new ExperimentsStatus(new Teams($App->Users));
@@ -82,7 +88,7 @@ try {
             $Entity = $model->Steps;
             break;
         case Orderable::Todolist:
-            $Entity = new Todolist((int) $App->Users->userData['userid']);
+            $Entity = new Todolist($App->Users->userData['userid']);
             break;
         case Orderable::ExperimentsTemplates:
             $Entity = new Templates($App->Users);
@@ -99,18 +105,18 @@ try {
             throw new IllegalActionException('Bad table for updateOrdering.');
     }
     $Entity->updateOrdering($OrderingParams);
+} catch (IllegalActionException $e) {
+    $App->Log->notice('', array(array('userid' => $App->Session->get('userid')), array('IllegalAction', $e->getMessage())));
+    $Response->setData(array(
+        'res' => false,
+        'msg' => Messages::InsufficientPermissions->toHuman(),
+    ));
 } catch (ImproperActionException | UnauthorizedException $e) {
     $Response->setData(array(
         'res' => false,
         'msg' => $e->getMessage(),
     ));
-} catch (IllegalActionException $e) {
-    $App->Log->notice('', array(array('userid' => $App->Session->get('userid')), array('IllegalAction', $e->getMessage())));
-    $Response->setData(array(
-        'res' => false,
-        'msg' => Tools::error(true),
-    ));
-} catch (DatabaseErrorException | FilesystemErrorException $e) {
+} catch (DatabaseErrorException $e) {
     $App->Log->error('', array(array('userid' => $App->Session->get('userid')), array('Error', $e)));
     $Response->setData(array(
         'res' => false,
@@ -120,7 +126,7 @@ try {
     $App->Log->error('', array(array('userid' => $App->Session->get('userid')), array('exception' => $e)));
     $Response->setData(array(
         'res' => false,
-        'msg' => Tools::error(),
+        'msg' => Messages::GenericError->toHuman(),
     ));
 } finally {
     $Response->send();

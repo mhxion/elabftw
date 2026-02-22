@@ -1,4 +1,5 @@
-<?php declare(strict_types=1);
+<?php
+
 /**
  * @author Nicolas CARPi <nico-git@deltablot.email>
  * @copyright 2012 Nicolas CARPi
@@ -7,63 +8,57 @@
  * @package elabftw
  */
 
+declare(strict_types=1);
+
 namespace Elabftw\Make;
 
-use Elabftw\Elabftw\DisplayParams;
-use Elabftw\Elabftw\Tools;
+use Elabftw\Elabftw\Env;
 use Elabftw\Interfaces\MpdfProviderInterface;
-use Elabftw\Models\AbstractEntity;
-use Elabftw\Models\Config;
+use Elabftw\Models\Users\Users;
 use Elabftw\Traits\TwigTrait;
-use Symfony\Component\HttpFoundation\Request;
+use Override;
 
 /**
  * Make a PDF from several experiments or db items showing only minimal info with QR codes
  */
-class MakeQrPdf extends AbstractMakePdf
+final class MakeQrPdf extends AbstractMakePdf
 {
     use TwigTrait;
 
-    public function __construct(MpdfProviderInterface $mpdfProvider, AbstractEntity $entity, private array $idArr)
+    public function __construct(MpdfProviderInterface $mpdfProvider, protected Users $requester, private array $entityArr)
     {
-        parent::__construct($mpdfProvider, $entity);
+        parent::__construct(
+            mpdfProvider: $mpdfProvider,
+            includeChangelog: false
+        );
     }
 
     /**
      * Get the name of the generated file
      */
+    #[Override]
     public function getFileName(): string
     {
         return 'qr-codes.elabftw.pdf';
     }
 
+    #[Override]
     public function getFileContent(): string
     {
+        // add view URL to entities
+        $siteUrl = Env::asUrl('SITE_URL');
+        foreach ($this->entityArr as &$entity) {
+            $entity->entityData['url'] = sprintf('%s/%s?mode=view&id=%d', $siteUrl, $entity->entityType->toPage(), $entity->id);
+        }
         $renderArr = array(
             'css' => $this->getCss(),
-            'entityArr' => $this->readAll(),
-            'useCjk' => $this->Entity->Users->userData['cjk_fonts'],
+            'entityArr' => $this->entityArr,
+            'useCjk' => $this->requester->userData['cjk_fonts'],
         );
-        $Config = Config::getConfig();
-        $html = $this->getTwig((bool) $Config->configArr['debug'])->render('qr-pdf.html', $renderArr);
+        $html = $this->getTwig(Env::asBool('DEV_MODE'))->render('qr-pdf.html', $renderArr);
         $this->mpdf->WriteHTML(html_entity_decode($html, ENT_HTML5, 'UTF-8'));
         $output = $this->mpdf->OutputBinaryData();
         $this->contentSize = strlen($output);
         return $output;
-    }
-
-    /**
-     * Get all the entity data from the id array
-     */
-    private function readAll(): array
-    {
-        $DisplayParams = new DisplayParams($this->Entity->Users, Request::createFromGlobals(), $this->Entity->entityType);
-        $DisplayParams->limit = 9001;
-        $this->Entity->idFilter = Tools::getIdFilterSql($this->idArr);
-        $entityArr = $this->Entity->readShow($DisplayParams, true);
-        foreach ($entityArr as &$entity) {
-            $entity['url'] = $this->getUrl((int) $entity['id']);
-        }
-        return $entityArr;
     }
 }

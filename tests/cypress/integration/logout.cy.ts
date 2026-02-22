@@ -1,7 +1,6 @@
 describe('Logout', () => {
   beforeEach(() => {
     cy.login();
-    cy.enableCodeCoverage(Cypress.currentTest.titlePath.join(' '));
   });
 
   it('redirects to login.php', () => {
@@ -12,5 +11,14 @@ describe('Logout', () => {
       expect(resp.status).to.eq(302);
       expect(resp.headers.location).to.eq('/login.php');
     });
+  });
+
+  it('shows message to close the browser when user logged out', () => {
+    cy.visit('/dashboard.php');
+    cy.get('#navbarDropdown').should('exist').click();
+    cy.get('[data-action="logout"]').click();
+    cy.location('pathname').should('include', '/login.php');
+    cy.get('#logoutMessage').should('exist').should('not.have.attr', 'hidden');
+    cy.clearCookies();
   });
 });

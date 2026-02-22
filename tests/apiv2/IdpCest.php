@@ -1,4 +1,6 @@
-<?php declare(strict_types=1);
+<?php
+
+declare(strict_types=1);
 /**
  * @package   Elabftw\Elabftw
  * @author    Nicolas CARPi <nico-git@deltablot.email>
@@ -7,7 +9,7 @@
  * @see       https://www.elabftw.net Official website
  */
 
-use \Codeception\Util\HttpCode;
+use Codeception\Util\HttpCode;
 
 class IdpCest
 {
@@ -31,12 +33,6 @@ class IdpCest
         $I->sendPOST('/idps', array(
             'name' => 'apitest',
             'entityid' => 'https://idp.example.com',
-            'sso_url' => 'https://idp.example.com/saml/sso',
-            'sso_binding' => 'u',
-            'slo_url' => 'https://idp.example.com/saml/slo',
-            'slo_binding' => 'u',
-            'x509' => 'a',
-            'x509_new' => 'a',
             'email_attr' => 'mail',
             'team_attr' => '',
             'fname_attr' => 'givenname',

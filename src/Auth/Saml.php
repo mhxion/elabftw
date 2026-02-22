@@ -1,4 +1,5 @@
-<?php declare(strict_types=1);
+<?php
+
 /**
  * @author Nicolas CARPi <nico-git@deltablot.email>
  * @copyright 2012 Nicolas CARPi
@@ -7,24 +8,25 @@
  * @package elabftw
  */
 
+declare(strict_types=1);
+
 namespace Elabftw\Auth;
 
 use DateTimeImmutable;
 use Defuse\Crypto\Key;
-use Elabftw\Elabftw\AuthResponse;
-use Elabftw\Elabftw\Tools;
-use Elabftw\Enums\Action;
+use Elabftw\Elabftw\Env;
+use Elabftw\Enums\Messages;
 use Elabftw\Exceptions\ImproperActionException;
 use Elabftw\Exceptions\ResourceNotFoundException;
 use Elabftw\Exceptions\UnauthorizedException;
 use Elabftw\Interfaces\AuthInterface;
-use Elabftw\Models\Config;
-use Elabftw\Models\ExistingUser;
+use Elabftw\Interfaces\AuthResponseInterface;
+use Elabftw\Models\Users\ExistingUser;
 use Elabftw\Models\Teams;
-use Elabftw\Models\Users;
-use Elabftw\Models\ValidatedUser;
-use function is_array;
-use function is_int;
+use Elabftw\Models\Users\Users;
+use Elabftw\Models\Users\ValidatedUser;
+use Elabftw\Params\UserParams;
+use Elabftw\Services\UsersHelper;
 use Lcobucci\JWT\Configuration;
 use Lcobucci\JWT\Encoding\CannotDecodeContent;
 use Lcobucci\JWT\Signer\Hmac\Sha256;
@@ -35,15 +37,21 @@ use Lcobucci\JWT\Validation\Constraint\PermittedFor;
 use Lcobucci\JWT\Validation\Constraint\SignedWith;
 use Lcobucci\JWT\Validation\RequiredConstraintsViolated;
 use OneLogin\Saml2\Auth as SamlAuthLib;
+use Override;
+
+use function is_array;
+use function is_string;
 
 /**
  * SAML auth service
  */
-class Saml implements AuthInterface
+final class Saml implements AuthInterface
 {
-    private const TEAM_SELECTION_REQUIRED = 1;
+    private const int TEAM_SELECTION_REQUIRED = 1;
 
-    private AuthResponse $AuthResponse;
+    private const string UNKNOWN_VALUE = 'Unknown';
+
+    private AuthResponseInterface $AuthResponse;
 
     private array $samlUserdata = array();
 
@@ -56,7 +64,7 @@ class Saml implements AuthInterface
 
     public static function getJWTConfig(): Configuration
     {
-        $secretKey = Key::loadFromAsciiSafeString(Config::fromEnv('SECRET_KEY'));
+        $secretKey = Key::loadFromAsciiSafeString(Env::asString('SECRET_KEY'));
         /** @psalm-suppress ArgumentTypeCoercion */
         $config = Configuration::forSymmetricSigner(
             new Sha256(),
@@ -83,6 +91,8 @@ class Saml implements AuthInterface
                 // Configures a new claim, called "uid"
                 ->withClaim('sid', $this->getSessionIndex())
                 ->withClaim('idp_id', $idpId)
+                ->withClaim('nameid', $this->SamlAuthLib->getNameId())
+                ->withClaim('nameid_format', $this->SamlAuthLib->getNameIdFormat())
                 // Builds a new token
                 ->getToken($config->signer(), $config->signingKey());
         return $token->toString();
@@ -102,29 +112,38 @@ class Saml implements AuthInterface
             }
             $conf->validator()->assert($parsedToken, ...$conf->validationConstraints());
 
-            return array($parsedToken->claims()->get('sid'), $parsedToken->claims()->get('idp_id'));
+            return array(
+                $parsedToken->claims()->get('sid'),
+                $parsedToken->claims()->get('idp_id'),
+                $parsedToken->claims()->get('nameid'),
+                $parsedToken->claims()->get('nameid_format'),
+            );
         } catch (CannotDecodeContent | InvalidTokenStructure | RequiredConstraintsViolated) {
             throw new UnauthorizedException('Decoding JWT Token failed');
         }
     }
 
-    public function tryAuth(): AuthResponse
+    #[Override]
+    public function tryAuth(): AuthResponseInterface
     {
         $returnUrl = $this->settings['baseurl'] . '/index.php?acs';
+        // adding stay: true to login() will make psalm/phpstan happy but breaks saml auth
         $this->SamlAuthLib->login($returnUrl);
-        return $this->AuthResponse;
+        // ^-- this will run exit()
+        /** @psalm-suppress UnevaluatedCode */
+        return $this->AuthResponse; // @phpstan-ignore-line
     }
 
-    public function assertIdpResponse(): AuthResponse
+    public function assertIdpResponse(): AuthResponseInterface
     {
         $this->SamlAuthLib->processResponse();
         $errors = $this->SamlAuthLib->getErrors();
 
         // Display the errors if we are in debug mode
         if (!empty($errors)) {
-            $error = Tools::error();
+            $error = Messages::GenericError->toHuman();
             // get more verbose if debug mode is active
-            if ($this->configArr['debug']) {
+            if ($this->configArr['saml_debug']) {
                 $error = implode(', ', $errors);
             }
             throw new UnauthorizedException($error);
@@ -143,34 +162,48 @@ class Saml implements AuthInterface
         // GET EMAIL
         $email = $this->extractAttribute($this->settings['idp']['emailAttr']);
 
+        // GET ORGID
+        $orgid = $this->getOrgid();
+
         // GET POPULATED USERS OBJECT
-        $Users = $this->getUsers($email);
+        $Users = $this->getUsers($email, $orgid);
         if (!$Users instanceof Users) {
-            $this->AuthResponse->userid = 0;
-            $this->AuthResponse->initTeamRequired = true;
-            $this->AuthResponse->initTeamUserInfo = array(
+            $this->AuthResponse->setAuthenticatedUserid(0);
+            $this->AuthResponse->setInitTeamRequired(true);
+            $this->AuthResponse->setInitTeamInfo(array(
                 'email' => $email,
                 'firstname' => $this->getName(),
                 'lastname' => $this->getName(true),
-            );
+                'orgid' => $orgid,
+            ));
             return $this->AuthResponse;
         }
 
         $userid = $Users->userData['userid'];
 
-        $this->AuthResponse->userid = $userid;
-        $this->AuthResponse->mfaSecret = $Users->userData['mfa_secret'];
-        $this->AuthResponse->isValidated = (bool) $Users->userData['validated'];
+        $this->AuthResponse->setAuthenticatedUserid($userid);
 
         // synchronize the teams from the IDP
         // because teams can change since the time the user was created
-        if ($this->configArr['saml_sync_teams']) {
+        if ($this->configArr['saml_sync_teams'] === '1') {
             $Teams = new Teams($Users);
             $Teams->synchronize($userid, $this->getTeamsFromIdpResponse());
         }
 
+        // update some user attributes with value from IDP
+        $firstname = $this->getName();
+        $lastname = $this->getName(true);
+        if ($firstname !== self::UNKNOWN_VALUE && $lastname !== self::UNKNOWN_VALUE) {
+            $Users->update(new UserParams('firstname', $firstname));
+            $Users->update(new UserParams('lastname', $lastname));
+        }
+        if ($orgid !== null) {
+            $Users->update(new UserParams('orgid', $orgid));
+        }
+
         // load the teams from db
-        $this->AuthResponse->setTeams();
+        $UsersHelper = new UsersHelper($this->AuthResponse->getAuthUserid());
+        $this->AuthResponse->setTeams($UsersHelper);
 
         return $this->AuthResponse;
     }
@@ -198,6 +231,15 @@ class Saml implements AuthInterface
         return $attr;
     }
 
+    private function getOrgid(): ?string
+    {
+        $orgid = $this->samlUserdata[$this->settings['idp']['orgidAttr'] ?? self::UNKNOWN_VALUE] ?? null;
+        if (is_array($orgid)) {
+            return $orgid[0];
+        }
+        return $orgid;
+    }
+
     /**
      * Get firstname or lastname from idp
      **/
@@ -206,7 +248,7 @@ class Saml implements AuthInterface
         // toggle firstname or lastname
         $selector = $last ? 'lnameAttr' : 'fnameAttr';
 
-        $name = $this->samlUserdata[$this->settings['idp'][$selector] ?? 'Unknown'] ?? 'Unknown';
+        $name = $this->samlUserdata[$this->settings['idp'][$selector] ?? self::UNKNOWN_VALUE] ?? self::UNKNOWN_VALUE;
         if (is_array($name)) {
             return $name[0];
         }
@@ -224,15 +266,8 @@ class Saml implements AuthInterface
         }
 
         $Teams = new Teams(new Users());
-        if (is_array($teams)) {
-            return $Teams->getTeamsFromIdOrNameOrOrgidArray($teams);
-        }
-
-        if (is_string($teams)) {
-            // maybe it's a string containing several teams separated by spaces
-            return $Teams->getTeamsFromIdOrNameOrOrgidArray(explode(',', $teams));
-        }
-        throw new ImproperActionException('Could not find team ID to assign user!');
+        $allowTeamCreation = ($this->configArr['saml_team_create'] ?? '1') === '1';
+        return $Teams->getTeamsFromIdOrNameOrOrgidArray($teams, $allowTeamCreation);
     }
 
     private function getTeams(): array | int
@@ -252,19 +287,14 @@ class Saml implements AuthInterface
             }
             return array((int) $teamId);
         }
-
-        if (is_array($teams)) {
-            return $teams;
-        }
-
         if (is_string($teams)) {
-            // maybe it's a string containing several teams separated by commas
-            return explode(',', $teams);
+            return array($teams);
         }
-        throw new ImproperActionException('Could not find team ID to assign user!');
+
+        return $teams;
     }
 
-    private function getExistingUser(string $email): Users | false
+    private function getExistingUser(string $email, ?string $orgid = null): Users | false
     {
         try {
             // we first try to match a local user with the email
@@ -272,13 +302,12 @@ class Saml implements AuthInterface
         } catch (ResourceNotFoundException) {
             // try finding the user with the orgid because email didn't work
             // but only if we explicitly want to
-            if ($this->configArr['saml_fallback_orgid'] === '1' && !empty($this->settings['idp']['orgidAttr'])) {
-                $orgid = $this->extractAttribute($this->settings['idp']['orgidAttr']);
+            if ($this->configArr['saml_fallback_orgid'] === '1' && $orgid) {
                 try {
                     $Users = ExistingUser::fromOrgid($orgid);
                     // ok we found our user thanks to the orgid, maybe we want to update our stored email?
                     if ($this->configArr['saml_sync_email_idp'] === '1') {
-                        $Users->patch(Action::Update, array('email' => $email));
+                        $Users->update(new UserParams('email', $email));
                     }
                     return $Users;
                 } catch (ResourceNotFoundException) {
@@ -289,9 +318,9 @@ class Saml implements AuthInterface
         }
     }
 
-    private function getUsers(string $email): Users | int
+    private function getUsers(string $email, ?string $orgid = null): Users | int
     {
-        $Users = $this->getExistingUser($email);
+        $Users = $this->getExistingUser($email, $orgid);
         if ($Users === false) {
             // the user doesn't exist yet in the db
             // what do we do? Lookup the config setting for that case
@@ -306,13 +335,14 @@ class Saml implements AuthInterface
             // now try and get the teams
             $teams = $this->getTeams();
 
-            // when we want to allow user to select a team before account is created
             if (is_int($teams)) {
                 return $teams;
             }
 
             // CREATE USER (and force validation of user, with user permissions)
-            $Users = ValidatedUser::fromExternal($email, $teams, $this->getName(), $this->getName(true));
+            $allowTeamCreation = ($this->configArr['saml_team_create'] ?? '1') === '1';
+            /** @psalm-suppress PossiblyInvalidArgument */
+            $Users = ValidatedUser::fromExternal($email, $teams, $this->getName(), $this->getName(true), orgid: $orgid, allowTeamCreation: $allowTeamCreation);
         }
         return $Users;
     }

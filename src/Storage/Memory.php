@@ -1,4 +1,5 @@
-<?php declare(strict_types=1);
+<?php
+
 /**
  * @author Nicolas CARPi <nico-git@deltablot.email>
  * @copyright 2022 Nicolas CARPi
@@ -7,23 +8,28 @@
  * @package elabftw
  */
 
+declare(strict_types=1);
+
 namespace Elabftw\Storage;
 
 use League\Flysystem\FilesystemAdapter;
 use League\Flysystem\InMemory\InMemoryFilesystemAdapter;
+use Override;
 
 /**
  * For in memory filesystem operations
  */
-class Memory extends AbstractStorage
+final class Memory extends AbstractStorage
 {
-    public function getPath(string $relativePath=''): string
+    #[Override]
+    public function getPath(string $relativePath = ''): string
     {
         // $path is not actually used here because php://memory does not provide a full file system
         // compare to https://github.com/thephpleague/flysystem/issues/471#issuecomment-106231642
         return 'php://memory';
     }
 
+    #[Override]
     protected function getAdapter(): FilesystemAdapter
     {
         return new InMemoryFilesystemAdapter();

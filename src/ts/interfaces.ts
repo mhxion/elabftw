@@ -6,6 +6,8 @@
  * @package elabftw
  */
 
+type BinaryValue = 0 | 1;
+
 interface ResponseMsg {
   res: boolean;
   msg: string;
@@ -42,11 +44,35 @@ interface CheckableItem {
   randomid: number;
 }
 
+interface Selected {
+  experiments_categories: number[];
+  experiments_status: number[];
+  items_categories: number[];
+  items_status: number[];
+  items_tags: number[];
+  experiments_tags: number[];
+  users_experiments: number[];
+  users_resources: number[];
+  tags: number[];
+  userid: number;
+  team: number;
+  can: string;
+  can_base: number;
+}
+
 enum Method {
   GET = 'GET',
   POST = 'POST',
   PATCH = 'PATCH',
   DELETE = 'DELETE',
+}
+
+enum ProcurementState {
+  Pending = 10,
+  Validated = 20,
+  PartiallyReceived = 30,
+  Received = 40,
+  Archived = 50,
 }
 
 enum Action {
@@ -60,37 +86,57 @@ enum Action {
   Add = 'add',
   Archive = 'archive',
   Bloxberg = 'bloxberg',
-  Deduplicate = 'deduplicate',
+  CancelRequestableAction = 'cancelrequestableaction',
+  CreateProcurementRequest = 'createprocurementrequest',
   Disable2fa = 'disable2fa',
   Duplicate = 'duplicate',
+  Finish = 'finish',
+  ForceLock = 'forcelock',
+  ForceUnlock = 'forceunlock',
   Lock = 'lock',
+  Notif = 'notif',
+  NotifDestroy = 'notifdestroy',
   PatchUser2Team = 'patchuser2team',
   Pin = 'pin',
+  RemoveExclusiveEditMode = 'removeexclusiveeditmode',
   Replace = 'replace',
+  Restore = 'restore',
+  RequestAction = 'requestaction',
+  Review = 'review',
+  SendOnboardingEmails = 'sendonboardingemails',
+  SetNextCustomId = 'setnextcustomid',
+  Sign = 'sign',
   Timestamp = 'timestamp',
+  Unarchive = 'unarchive',
+  Unreference = 'unreference',
+  UpdateMetadataField = 'updatemetadatafield',
   UpdatePassword = 'updatepassword',
   UpdateTag = 'updatetag',
-  UpdateMetadataField = 'updatemetadatafield',
-  Unreference = 'unreference',
+  UpdateOwner = 'updateowner',
   Validate = 'validate',
+  // Dspace Actions
+  GetCollections = 'getcollections',
+  GetTypes = 'gettypes',
 }
 
 enum Model {
   Apikey = 'apikeys',
   Comment = 'comments',
+  Compounds = 'compounds',
   Config = 'config',
   FavTag = 'favtags',
   Idp = 'idps',
+  IdpsSources = 'idps_sources',
   ItemsStatus = 'items_status',
   Link = 'links',
   Notification = 'notifications',
   ExperimentsCategories = 'experiments_categories',
   ExperimentsStatus = 'experiments_status',
   ExtraFieldsKeys = 'extra_fields_keys',
+  Sigkeys = 'sig_keys',
   Step = 'steps',
   Tag = 'tags',
   Team = 'teams',
-  TeamTags = 'team_tags',
   TeamGroup = 'teamgroups',
   Todolist = 'todolist',
   UnfinishedSteps = 'unfinishedsteps',
@@ -99,12 +145,19 @@ enum Model {
   User2Team = 'user2team',
 }
 
+enum LinkSubModel {
+  CompoundsLinks = 'compounds_links',
+  ExperimentsLinks = 'experiments_links',
+  ItemsLinks = 'items_links',
+}
+
 // Match php enum EntityType
 enum EntityType {
   Experiment = 'experiments',
   Item = 'items',
   ItemType = 'items_types',
   Template = 'experiments_templates',
+  Other = 'other',
 }
 
 enum Target {
@@ -123,10 +176,25 @@ enum Target {
   Member = 'member',
   Metadata = 'metadata',
   MetadataField = 'metadatafield',
+  Passphrase = 'passphrase',
   Rating = 'rating',
   RealName = 'real_name',
+  Sigkey = 'sigkeys',
+  State = 'state',
   Title = 'title',
   UserId = 'userid',
+  Team = 'team',
+}
+
+enum FileType {
+  Csv = 'csv',
+  Eln = 'eln',
+  Html = 'html',
+  Json = 'json',
+  Ods = 'ods',
+  Xls = 'xls',
+  Xlsb = 'xlsb',
+  Xlsx = 'xlsx',
 }
 
 interface Entity {
@@ -136,13 +204,18 @@ interface Entity {
 
 export {
   Action,
+  BinaryValue,
   Categories,
   CheckableItem,
   Entity,
   EntityType,
+  FileType,
   Method,
   Model,
+  ProcurementState,
   ResponseMsg,
+  Selected,
+  LinkSubModel,
   Target,
   Todoitem,
   UnfinishedEntities,

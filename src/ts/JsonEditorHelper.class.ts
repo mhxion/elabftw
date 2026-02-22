@@ -8,11 +8,12 @@
 import { Metadata } from './Metadata.class';
 import JSONEditor from 'jsoneditor';
 import $ from 'jquery';
-import i18next from 'i18next';
-import { notif, notifSaved, reloadElement } from './misc';
-import { Action, Entity, Model } from './interfaces';
-import { Api } from './Apiv2.class';
+import i18next from './i18n';
+import { askFileName, ensureTogglableSectionIsOpen, reloadElements } from './misc';
+import { Action, Entity, FileType, Model } from './interfaces';
+import { ApiC } from './api';
 import { ValidMetadata } from './metadataInterfaces';
+import { notify } from './notify';
 
 // This class is named helper because the jsoneditor lib already exports JSONEditor
 export default class JsonEditorHelper {
@@ -23,7 +24,6 @@ export default class JsonEditorHelper {
   currentUploadId: string;
   currentFilename: string;
   editorTitle: HTMLElement;
-  api: Api;
 
   constructor(entity: Entity) {
     this.entity = entity;
@@ -31,7 +31,7 @@ export default class JsonEditorHelper {
     this.editorDiv = document.getElementById('jsonEditorContainer') as HTMLDivElement;
     this.MetadataC = new Metadata(entity, this);
     this.editorTitle = document.getElementById('jsonEditorTitle');
-    this.api = new Api();
+
   }
 
   // INIT
@@ -64,24 +64,14 @@ export default class JsonEditorHelper {
     if (this.editorDiv.dataset.preloadJson === '1') {
       this.loadMetadata();
     }
+    // TODO: make a PR in upstream repo to implement proper label support
+    document.querySelector('.jsoneditor-frame input[type="text"]')?.setAttribute('aria-label', 'Search metadata');
   }
 
   refresh(metadata: ValidMetadata): void {
     if (this.editor instanceof JSONEditor) {
       this.editor.update(metadata);
     }
-  }
-
-  focus(): void {
-    // toggle the arrow icon
-    const iconEl = document.getElementById('jsonEditorIcon');
-    iconEl.classList.add('fa-caret-down');
-    iconEl.classList.remove('fa-caret-right');
-    const jsonEditorDiv = document.getElementById('jsonEditorDiv');
-    // make sure it's not hidden
-    jsonEditorDiv.toggleAttribute('hidden', false);
-    // and scroll page into editor view
-    jsonEditorDiv.scrollIntoView();
   }
 
   loadFile(link: string, name: string, uploadid: string): void {
@@ -96,13 +86,13 @@ export default class JsonEditorHelper {
       })
       .then(json => {
         this.editor.set(json);
-        this.focus();
+        ensureTogglableSectionIsOpen('jsonEditorIcon', 'jsonEditorDiv');
       })
       .catch(e => {
         if (e instanceof SyntaxError) {
-          notif({ 'res': false, 'msg': i18next.t('json-parse-error') });
+          notify.error('invalid-info');
         } else {
-          notif({'res': false, 'msg':'JSON Editor: ' + e.message});
+          notify.error(e.message);
         }
       });
     // add the filename as a title
@@ -110,7 +100,7 @@ export default class JsonEditorHelper {
     this.currentUploadId = uploadid;
     this.currentFilename = name;
     this.editorDiv.dataset.what = 'file';
-    document.getElementById('jsonImportFileDiv').toggleAttribute('hidden', true);
+    document.getElementById('jsonImportFileDiv')?.toggleAttribute('hidden', true);
   }
 
   loadMetadata(): void {
@@ -121,12 +111,11 @@ export default class JsonEditorHelper {
     this.editorDiv.dataset.what = 'metadata';
   }
 
-  saveMetadata(): void {
+  saveMetadata(): Promise<void> {
     try {
-      this.MetadataC.update(this.editor.get());
+      return this.MetadataC.update(this.editor.get());
     } catch (error) {
-      notif({res: false, msg: 'Error parsing the JSON! Error logged in console.'});
-      console.error(error);
+      notify.error(error);
     }
   }
 
@@ -148,49 +137,21 @@ export default class JsonEditorHelper {
     }
   }
 
-  askFilename(): string {
-    let realName = prompt(i18next.t('request-filename'));
-    if (realName === null) {
-      return;
-    }
-    // strip the filename of the .json extension from the name if available
-    if (realName.slice(-5).includes('.json')) {
-      realName = realName.slice(0, -5);
-    }
-    return realName += '.json';
-  }
-
   // create a new file
   saveNewFile(): void {
-    const realName = this.askFilename();
+    const realName = askFileName(FileType.Json);
+    if (!realName) return;
     // add the new name for the file as a title
     this.editorTitle.innerText = i18next.t('filename') + ': ' + realName;
     const params = {
       'action': Action.CreateFromString,
-      'file_type': 'json',
+      'file_type': FileType.Json,
       'real_name': realName,
       'content': JSON.stringify(this.editor.get()),
     };
-    this.api.post(`${this.entity.type}/${this.entity.id}/${Model.Upload}`, params).then(resp => {
-      const location = resp.headers.get('location').split('/');
-      reloadElement('uploadsDiv');
-      this.currentUploadId = String(location[location.length - 1]);
-    });
-  }
-
-  saveAsFile(): void {
-    const realName = this.askFilename();
-    const content = JSON.stringify(this.editor.get());
-    const blob = new Blob([content], {type: 'application/json'});
-    const url = URL.createObjectURL(blob);
-    // we create a link and click it
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = realName;
-    this.editorDiv.appendChild(link);
-    link.click();
-    // cleanup by revoking the URL object
-    URL.revokeObjectURL(url);
+    ApiC.post2location(`${this.entity.type}/${this.entity.id}/${Model.Upload}`, params)
+      .then(id => this.currentUploadId = String(id))
+      .then(() => reloadElements(['uploadsDiv']));
   }
 
   // edit an existing file
@@ -203,30 +164,8 @@ export default class JsonEditorHelper {
     fetch(`api/v2/${this.entity.type}/${this.entity.id}/${Model.Upload}/${this.currentUploadId}`, {
       method: 'POST',
       body: formData,
-    });
-    notifSaved();
-  }
-
-  toggleDisplayMainText(): void {
-    let json = {};
-    // get the current metadata
-    this.MetadataC.read().then(metadata => {
-      if (metadata) {
-        json = metadata;
-      }
-      // add the namespace object 'elabftw' if it's not there
-      if (!Object.prototype.hasOwnProperty.call(json, 'elabftw')) {
-        json['elabftw'] = {};
-      }
-      // if it's not present, set it to false
-      if (!Object.prototype.hasOwnProperty.call(json['elabftw'], 'display_main_text')) {
-        json['elabftw']['display_main_text'] = false;
-      } else {
-        json['elabftw']['display_main_text'] = !json['elabftw']['display_main_text'];
-      }
-      this.editor.set(json);
-      this.saveMetadata();
-    });
+    }).then(() => reloadElements(['uploadsDiv']));
+    notify.success();
   }
 
   clear(): void {
@@ -234,6 +173,6 @@ export default class JsonEditorHelper {
     this.currentUploadId = undefined;
     this.editor.set({});
     this.editorDiv.dataset.what = '';
-    document.getElementById('jsonEditorMetadataLoadButton').removeAttribute('disabled');
+    document.getElementById('jsonEditorMetadataLoadButton')?.removeAttribute('disabled');
   }
 }

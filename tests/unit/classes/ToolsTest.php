@@ -1,4 +1,6 @@
-<?php declare(strict_types=1);
+<?php
+
+declare(strict_types=1);
 /**
  * @author Nicolas CARPi <nico-git@deltablot.email>
  * @copyright 2012 Nicolas CARPi
@@ -11,9 +13,9 @@ namespace Elabftw\Elabftw;
 
 class ToolsTest extends \PHPUnit\Framework\TestCase
 {
-    public function testGetMaxUploadSize(): void
+    public function testGetUuidv4(): void
     {
-        $this->assertIsInt(Tools::getMaxUploadSize());
+        $this->assertIsString(Tools::getUuidv4());
     }
 
     public function testFormatBytes(): void
@@ -37,12 +39,6 @@ class ToolsTest extends \PHPUnit\Framework\TestCase
         $md = '[a link](https://www.elabftw.net) **in bold** _in italic_';
         $html = '<p><a href="https://www.elabftw.net">a link</a> <strong>in bold</strong> <em>in italic</em></p>';
         $this->assertEquals($html, Tools::md2html($md));
-    }
-
-    public function testError(): void
-    {
-        $this->assertEquals('An error occurred!', Tools::error());
-        $this->assertEquals('This section is out of your reach!', Tools::error(true));
     }
 
     public function testGetShortElabid(): void

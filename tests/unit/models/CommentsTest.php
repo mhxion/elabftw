@@ -1,4 +1,6 @@
-<?php declare(strict_types=1);
+<?php
+
+declare(strict_types=1);
 /**
  * @author Nicolas CARPi <nico-git@deltablot.email>
  * @copyright 2012 Nicolas CARPi
@@ -9,53 +11,67 @@
 
 namespace Elabftw\Models;
 
-use Elabftw\Elabftw\CommentParam;
 use Elabftw\Enums\Action;
 use Elabftw\Exceptions\IllegalActionException;
 use Elabftw\Exceptions\ImproperActionException;
+use Elabftw\Params\CommentParam;
+use Elabftw\Traits\TestsUtilsTrait;
 
 class CommentsTest extends \PHPUnit\Framework\TestCase
 {
+    use TestsUtilsTrait;
+
     private Experiments $Entity;
 
     private Comments $Comments;
 
     protected function setUp(): void
     {
-        $this->Entity = new Experiments(new Users(1, 1), 1);
+        $this->Entity = $this->getFreshExperiment();
 
         $this->Comments = new Comments($this->Entity);
     }
 
-    public function testGetPage(): void
+    public function testGetApiPath(): void
     {
-        $this->assertSame('api/v2/experiments/1/comments/', $this->Comments->getPage());
+        $this->assertSame(sprintf('api/v2/experiments/%d/comments/', $this->Entity->id), $this->Comments->getApiPath());
     }
 
-    public function testCreate(): void
+    public function testCreateAndRead(): void
     {
-        $this->assertIsInt($this->Comments->postAction(Action::Create, array('comment' => 'Ohai')));
-    }
-
-    public function testRead(): void
-    {
-        $this->assertIsArray($this->Comments->readAll());
-        $this->Comments->setId(1);
-        $this->assertIsArray($this->Comments->readOne());
+        $comment = 'Heads up: the lab’s barometer was off yesterday, you might want to rerun that step.';
+        $id = $this->Comments->postAction(Action::Create, array('comment' => $comment));
+        $all = $this->Comments->readAll();
+        $this->assertEquals(1, count($all));
+        $this->Comments->setId($id);
+        $one = $this->Comments->readOne();
+        $this->assertEquals($comment, $one['comment']);
     }
 
     public function testUpdate(): void
     {
-        $this->Comments->setId(1);
-        $this->Comments->patch(Action::Update, array('comment' => 'Updated'));
+        $id = $this->Comments->postAction(Action::Create, array('comment' => 'Ohai'));
+        $this->Comments->setId($id);
+        $new = 'Updated comment';
+        $comment = $this->Comments->patch(Action::Update, array('comment' => $new));
+        $this->assertEquals($new, $comment['comment']);
         // too short comment
         $this->expectException(ImproperActionException::class);
-        $this->Comments->Update(new CommentParam(''));
+        $this->Comments->update(new CommentParam(''));
+    }
+
+    public function testUpdateImmutable(): void
+    {
+        $ImmutableComments = new ImmutableComments($this->Entity);
+        $ImmutableComments->setId($ImmutableComments->create(new CommentParam('An immutable comment')));
+        $this->expectException(IllegalActionException::class);
+        $ImmutableComments->update(new CommentParam('Nope'));
     }
 
     public function testDestroy(): void
     {
-        $this->Comments->setId(1);
+        $id = $this->Comments->postAction(Action::Create, array('comment' => 'Ohai'));
+        $this->Comments->setId($id);
         $this->assertTrue($this->Comments->destroy());
     }
 

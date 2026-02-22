@@ -1,4 +1,5 @@
-<?php declare(strict_types=1);
+<?php
+
 /**
  * @author Nicolas CARPi <nico-git@deltablot.email>
  * @copyright 2012 Nicolas CARPi
@@ -7,76 +8,64 @@
  * @package elabftw
  */
 
+declare(strict_types=1);
+
 namespace Elabftw\Make;
 
-use function date;
-use Elabftw\Elabftw\Db;
 use Elabftw\Elabftw\Tools;
-use Elabftw\Models\Teams;
+use Elabftw\Models\Users\Users;
 use Elabftw\Services\UsersHelper;
-use Elabftw\Traits\UploadTrait;
 use PDO;
+use Override;
+
+use function date;
 
 /**
- * Create a report of usage for all users
+ * Create a report of usage for users provided in construct
  */
 class MakeReport extends AbstractMakeCsv
 {
-    use UploadTrait;
+    protected array $users;
 
-    protected Db $Db;
-
-    public function __construct(private Teams $Teams)
+    public function __construct(protected Users $requester)
     {
-        $this->Db = Db::getConnection();
+        parent::__construct();
+        $this->canReadOrExplode();
+        $this->rows = $this->getRows();
     }
 
     /**
      * The human friendly name
      */
+    #[Override]
     public function getFileName(): string
     {
         return date('Y-m-d') . '-report.elabftw.csv';
     }
 
-    /**
-     * Columns of the CSV
-     */
-    protected function getHeader(): array
+    protected function canReadOrExplode(): void
     {
-        return array(
-            'userid',
-            'firstname',
-            'lastname',
-            'orgid',
-            'email',
-            'has_mfa_enabled',
-            'validated',
-            'archived',
-            'last_login',
-            'valid_until',
-            'is_sysadmin',
-            'full_name',
-            'team(s)',
-            'diskusage_in_bytes',
-            'diskusage_formatted',
-            'exp_total',
-            'exp_timestamped_total',
-        );
+        $this->requester->isSysadminOrExplode();
+    }
+
+    protected function readUsers(): array
+    {
+        return $this->requester->readFromQuery();
     }
 
     /**
      * Get the rows for each users
      */
+    #[Override]
     protected function getRows(): array
     {
-        $allUsers = $this->Teams->Users->readFromQuery('');
-        foreach ($allUsers as $key => $user) {
-            $UsersHelper = new UsersHelper((int) $user['userid']);
+        $users = $this->readUsers();
+        foreach ($users as $key => $user) {
+            $UsersHelper = new UsersHelper($user['userid']);
             // get the teams of user
             $teams = implode(',', $UsersHelper->getTeamsNameFromUserid());
             // get disk usage for all uploaded files
-            $diskUsage = $this->getDiskUsage((int) $user['userid']);
+            $diskUsage = $this->getDiskUsage($user['userid']);
 
             // remove unused columns as they will mess up the csv
             // these columns can be null
@@ -86,21 +75,22 @@ class MakeReport extends AbstractMakeCsv
                 'auth_service',
                 'token',
                 'auth_lock_time',
+                'sig_pubkey',
             );
             foreach ($unusedColumns as $column) {
-                unset($allUsers[$key][$column]);
+                unset($users[$key][$column]);
             }
 
-            $allUsers[$key]['team(s)'] = $teams;
-            $allUsers[$key]['diskusage_in_bytes'] = $diskUsage;
-            $allUsers[$key]['diskusage_formatted'] = Tools::formatBytes($diskUsage);
-            $allUsers[$key]['exp_total'] = $UsersHelper->countExperiments();
-            $allUsers[$key]['exp_timestamped_total'] = $UsersHelper->countTimestampedExperiments();
+            $users[$key]['team(s)'] = $teams;
+            $users[$key]['diskusage_in_bytes'] = $diskUsage;
+            $users[$key]['diskusage_formatted'] = Tools::formatBytes($diskUsage);
+            $users[$key]['exp_total'] = $UsersHelper->countExperiments();
+            $users[$key]['exp_timestamped_total'] = $UsersHelper->countTimestampedExperiments();
         }
-        return $allUsers;
+        return $users;
     }
 
-    private function getDiskUsage(int $userid): int
+    protected function getDiskUsage(int $userid): int
     {
         $sql = 'SELECT SUM(filesize) FROM uploads WHERE userid = :userid';
         $req = $this->Db->prepare($sql);

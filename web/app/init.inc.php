@@ -1,4 +1,7 @@
-<?php declare(strict_types=1);
+<?php
+
+declare(strict_types=1);
+
 /**
  * @author Nicolas CARPi <nico-git@deltablot.email>
  * @copyright 2012 Nicolas CARPi
@@ -8,23 +11,26 @@
 
 namespace Elabftw\Elabftw;
 
-use function basename;
-use function dirname;
+use Elabftw\Controllers\LoginController;
 use Elabftw\Exceptions\DatabaseErrorException;
 use Elabftw\Exceptions\ImproperActionException;
-use Elabftw\Exceptions\InvalidCsrfTokenException;
 use Elabftw\Exceptions\UnauthorizedException;
 use Elabftw\Models\Config;
+use Elabftw\Models\Users\Users;
 use Elabftw\Services\LoginHelper;
 use Exception;
-use function header;
-use function in_array;
-use Monolog\Logger;
+use League\Flysystem\Filesystem as Fs;
+use League\Flysystem\Local\LocalFilesystemAdapter;
 use PDOException;
-use function setcookie;
-use function stripos;
 use Symfony\Component\HttpFoundation\Request;
 use Symfony\Component\HttpFoundation\Session\Session;
+
+use function basename;
+use function dirname;
+use function header;
+use function in_array;
+use function setcookie;
+use function stripos;
 
 /**
  *   _       _ _
@@ -44,15 +50,16 @@ $Session->start();
 $Request->setSession($Session);
 
 try {
+    // this allows us to write to stdout/stderr aka access/error logs of nginx
+    $Logger = App::getDefaultLogger();
+
     // Config::getConfig() will make the first SQL request
     // PDO will throw an exception if the SQL structure is not imported yet
     try {
         $Config = Config::getConfig();
     } catch (DatabaseErrorException | PDOException $e) {
-        throw new ImproperActionException('<html><body style="padding:8vmin;background-color: #dbdbdb;color: #343434;font-family: sans-serif"><h1>Error encountered during MySQL initialization</h1><h2>Possible solutions:</h2><ul style="line-height:150%"><li>Make sure the database is initialized with <code style="background-color: black;color:white;padding:5px;border-radius: 5px;font-weight: bold">docker exec elabftw bin/init db:install</code></li><li>Make sure credentials for MySQL are correct in the YAML config file</li><li>Make sure the database is operational and reachable (firewalls)</li></ul></body></html>');
-    }
-    if (Config::fromEnv('SITE_URL') === '') {
-        throw new ImproperActionException('<html><body style="padding:8vmin;background-color: #dbdbdb;color: #343434;font-family: sans-serif"><h1>Could not find mandatory <code style="color: #29AEB9">SITE_URL</code> variable! Please <a href="https://doc.elabftw.net/changelog.html#version-4-3-0">have a look at the changelog</a>.</h1></body></html>');
+        $Logger->critical('', array('Exception' => $e));
+        throw new ImproperActionException('<html><body style="padding:8vmin;background-color: #dbdbdb;color: #343434;font-family: sans-serif"><h1>Error encountered during MySQL initialization</h1><h2>Possible solutions:</h2><ul style="line-height:150%"><li>Make sure the database is initialized with <code style="background-color: black;color:white;padding:5px;border-radius: 5px;font-weight: bold">docker exec elabftw bin/init db:install</code></li><li>Make sure hostname and credentials for MySQL are correctly configured through environment variables</li><li>Make sure the database is operational and reachable (firewalls)</li></ul></body></html>');
     }
 
     // CSRF
@@ -64,13 +71,18 @@ try {
         // or generate a new one and add it into the session
         $Session->set('csrf', $Csrf->getToken());
     }
-    // at the moment we don't validate csrf for saml login FIXME TODO
+    // CSRF doesn't apply to SAML Assertion Consumer Service endpoint
     if (basename($Request->getScriptName()) !== 'index.php') {
         $Csrf->validate();
     }
     // END CSRF
 
-    $App = new App($Request, $Session, $Config, new Logger('elabftw'));
+    // Show helpful screen if database schema needs update
+    $Update = new Update((int) $Config->configArr['schema'], new Sql(new Fs(new LocalFilesystemAdapter(dirname(__DIR__, 2) . '/src/sql'))));
+    // throws InvalidSchemaException if schema is incorrect
+    $Update->checkSchema();
+
+    $App = new App($Request, $Session, $Config, $Logger, new Users(), Env::asBool('DEV_MODE'), Env::asBool('DEMO_MODE'));
     //-*-*-*-*-*-*-**-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-//
     //     ____          _                            //
     //    / ___|___ _ __| |__   ___ _ __ _   _ ___    //
@@ -81,6 +93,7 @@ try {
     //-*-*-*-*-*-*-**-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-*-//
     // pages where you don't need to be logged in
     // only the script name, not the path because we use basename() on it
+    // Note: this should probably be merged into LoginController, maybe create a VisitorUser
     $nologinArr = array(
         // the api can be access with session or token (or only token for v1) so we skip auth here to do it later with custom logic
         'ApiController.php',
@@ -97,16 +110,15 @@ try {
     );
 
     if (!in_array(basename($Request->getScriptName()), $nologinArr, true) && !$Session->has('is_auth')) {
-        // try to login our user with session, cookie or other method not requiring a login action
-        $Auth = new Auth($App->Config, $Request);
+        // try to login our cookie or other methods not requiring a login action
+        $LoginController = new LoginController($App->Config->configArr, $Request, $App->Session, Env::asBool('DEMO_MODE'));
         // this will throw an UnauthorizedException if we don't have a valid auth
-        $AuthResponse = $Auth->tryAuth();
-        $LoginHelper = new LoginHelper($AuthResponse, $Session);
-        $LoginHelper->login(false);
+        $AuthResponse = $LoginController->getAuthResponse();
+        new LoginHelper($AuthResponse, $Session, (int) $App->Config->configArr['cookie_validity_time'])->login();
     }
-
     $App->boot();
-} catch (UnauthorizedException | InvalidCsrfTokenException $e) {
+
+} catch (UnauthorizedException $e) {
     // KICK USER TO LOGOUT PAGE THAT WILL REDIRECT TO LOGIN PAGE
     $cookieOptions = array(
         'expires' => time() + 30,
@@ -138,8 +150,7 @@ try {
     header('X-Elab-Need-Auth: 1');
     // don't send a GET app/logout.php if it's an ajax call because it messes up the jquery ajax
     if ($Request->headers->get('X-Requested-With') !== 'XMLHttpRequest') {
-        $url = Config::fromEnv('SITE_URL') . '/app/logout.php?keep_redirect=1';
-        header('Location: ' . $url);
+        header('Location: /app/logout.php?keep_redirect=1');
     }
     exit;
 } catch (Exception $e) {

@@ -1,4 +1,5 @@
-<?php declare(strict_types=1);
+<?php
+
 /**
  * @author Nicolas CARPi <nico-git@deltablot.email>
  * @copyright 2023 Nicolas CARPi
@@ -7,9 +8,12 @@
  * @package elabftw
  */
 
+declare(strict_types=1);
+
 namespace Elabftw\AuditEvent;
 
 use Elabftw\Enums\AuditCategory;
+use Override;
 
 class UserAttributeChanged extends AbstractAuditEvent
 {
@@ -23,6 +27,7 @@ class UserAttributeChanged extends AbstractAuditEvent
         parent::__construct($requesterUserid, $targetUserid);
     }
 
+    #[Override]
     public function getBody(): string
     {
         return sprintf(
@@ -33,8 +38,9 @@ class UserAttributeChanged extends AbstractAuditEvent
         );
     }
 
-    public function getCategory(): int
+    #[Override]
+    public function getCategory(): AuditCategory
     {
-        return AuditCategory::AccountModified->value;
+        return AuditCategory::AccountModified;
     }
 }

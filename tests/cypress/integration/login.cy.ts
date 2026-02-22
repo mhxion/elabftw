@@ -1,6 +1,16 @@
 describe('Login page', () => {
   beforeEach(() => {
-    cy.enableCodeCoverage(Cypress.currentTest.titlePath.join(' '));
+  });
+
+  it ('does not show Safari warning on non-Safari browsers', () => {
+    cy.visit('/login.php');
+    cy.get('#safariWarning').should('exist');
+    cy.get('#safariWarning').should('have.attr', 'hidden');
+  });
+
+  it ('does not show logout message on the first time', () => {
+    cy.visit('/login.php');
+    cy.get('#logoutMessage').should('exist').should('have.attr', 'hidden');
   });
 
   it('sets auth cookie when logging in via form submission', () => {
@@ -46,5 +56,15 @@ describe('Login page', () => {
   it('resets password of existing user', () => {
     fillEmailAddress('toto@yopmail.com{enter}');
     cy.get('div.alert.alert-success').should('contain', answer);
+  });
+
+  it ('logs in as anonymous user', () => {
+    cy.visit('/login.php');
+    cy.get('#anon-login').should('exist');
+    cy.get('#anon_login_select').select(0);
+    cy.get('#anon-login button[type="submit"]').click();
+    cy.location('pathname').should('eq', '/experiments.php');
+    cy.htmlvalidate();
+    cy.request('/app/logout.php');
   });
 });

@@ -1,4 +1,6 @@
-<?php declare(strict_types=1);
+<?php
+
+declare(strict_types=1);
 /**
  * @author Nicolas CARPi <nico-git@deltablot.email>
  * @copyright 2024 Nicolas CARPi
@@ -12,14 +14,15 @@ namespace Elabftw\Services;
 use DateTimeImmutable;
 use Elabftw\Enums\Action;
 use Elabftw\Enums\Usergroup;
-use Elabftw\Models\ValidatedUser;
+use Elabftw\Models\Users\ValidatedUser;
+use Symfony\Component\Console\Output\ConsoleOutput;
 
 class ExpirationNotifierTest extends \PHPUnit\Framework\TestCase
 {
     public function testSendEmails(): void
     {
         // first make a user close to expiration
-        $user = ValidatedUser::fromAdmin('expire@soon.example', array(1), 'expire', 'soon', Usergroup::User->value);
+        $user = ValidatedUser::fromAdmin('expire@soon.example', array(1), 'expire', 'soon', Usergroup::User);
         $date = new DateTimeImmutable('tomorrow');
         $user->patch(Action::Update, array('valid_until' => $date->format('Y-m-d')));
         // now alert user and admin
@@ -27,6 +30,6 @@ class ExpirationNotifierTest extends \PHPUnit\Framework\TestCase
         $stub->method('sendEmail')->willReturn(true);
         $ExpirationNotifier = new ExpirationNotifier($stub);
         // 2 emails should be sent, one for the user, one for the admin, but we only collect the admins email in the function return value
-        $this->assertEquals(1, $ExpirationNotifier->sendEmails());
+        $this->assertEquals(1, $ExpirationNotifier->sendEmails(new ConsoleOutput()));
     }
 }

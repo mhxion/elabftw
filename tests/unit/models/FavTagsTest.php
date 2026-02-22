@@ -1,4 +1,6 @@
-<?php declare(strict_types=1);
+<?php
+
+declare(strict_types=1);
 /**
  * @author Nicolas CARPi <nico-git@deltablot.email>
  * @copyright 2012 Nicolas CARPi
@@ -11,24 +13,27 @@ namespace Elabftw\Models;
 
 use Elabftw\Enums\Action;
 use Elabftw\Exceptions\ImproperActionException;
+use Elabftw\Traits\TestsUtilsTrait;
 
 class FavTagsTest extends \PHPUnit\Framework\TestCase
 {
+    use TestsUtilsTrait;
+
     private FavTags $FavTags;
 
     protected function setUp(): void
     {
-        $this->FavTags = new FavTags(new Users(1, 1));
+        $this->FavTags = new FavTags($this->getRandomUserInTeam(1));
     }
 
-    public function testGetPage(): void
+    public function testGetApiPath(): void
     {
-        $this->assertEquals('api/v2/favtags/', $this->FavTags->getPage());
+        $this->assertEquals('api/v2/favtags/', $this->FavTags->getApiPath());
     }
 
     public function testCreate(): void
     {
-        $Tags = new Tags(new Experiments(new Users(1, 1), 1));
+        $Tags = new Tags($this->getFreshExperiment());
         $Tags->postAction(Action::Create, array('tag' => 'test-tag'));
         $this->assertEquals(1, $this->FavTags->postAction(Action::Create, array('tag' => 'test-tag')));
         // try adding the same tag again
@@ -49,11 +54,6 @@ class FavTagsTest extends \PHPUnit\Framework\TestCase
     public function testReadOne(): void
     {
         $this->assertIsArray($this->FavTags->readOne());
-    }
-
-    public function testPatch(): void
-    {
-        $this->assertIsArray($this->FavTags->patch(Action::Update, array()));
     }
 
     public function testDestroy(): void

@@ -1,4 +1,6 @@
-<?php declare(strict_types=1);
+<?php
+
+declare(strict_types=1);
 /**
  * @author Nicolas CARPi <nico-git@deltablot.email>
  * @copyright 2012 Nicolas CARPi
@@ -11,9 +13,13 @@ namespace Elabftw\Models;
 
 use Elabftw\Enums\Action;
 use Elabftw\Exceptions\IllegalActionException;
+use Elabftw\Models\Users\Users;
+use Elabftw\Traits\TestsUtilsTrait;
 
 class TeamTagsTest extends \PHPUnit\Framework\TestCase
 {
+    use TestsUtilsTrait;
+
     private Users $Users;
 
     private TeamTags $TeamTags;
@@ -24,12 +30,12 @@ class TeamTagsTest extends \PHPUnit\Framework\TestCase
     {
         $this->Users = new Users(1, 1);
         $this->TeamTags = new TeamTags($this->Users, 1);
-        $this->Tags = new Tags(new Experiments($this->Users, 1));
+        $this->Tags = new Tags($this->getFreshExperiment());
     }
 
-    public function testGetPage(): void
+    public function testGetApiPath(): void
     {
-        $this->assertEquals('api/v2/team_tags/', $this->TeamTags->getPage());
+        $this->assertEquals('api/v2/teams/1/tags/', $this->TeamTags->getApiPath());
     }
 
     public function testCreate(): void
@@ -43,17 +49,12 @@ class TeamTagsTest extends \PHPUnit\Framework\TestCase
         // TODO test with query
     }
 
-    public function testReadFull(): void
-    {
-        $this->assertIsArray($this->TeamTags->readFull());
-    }
-
     public function testNoAdmin(): void
     {
         $Users = new Users(2, 1);
         $TeamTags = new TeamTags($Users);
         $this->expectException(IllegalActionException::class);
-        $TeamTags->patch(Action::Deduplicate, array());
+        $TeamTags->patch(Action::UpdateTag, array());
     }
 
     public function testNoAdminDestroy(): void
@@ -69,10 +70,23 @@ class TeamTagsTest extends \PHPUnit\Framework\TestCase
         // we can't directly create two of the same, it needs to be edited from one with a typo first
         $this->Tags->postAction(Action::Create, array('tag' => 'duplicated'));
         $this->TeamTags->setId($this->Tags->postAction(Action::Create, array('tag' => 'duplikated')));
-        $this->TeamTags->patch(Action::UpdateTag, array('tag' => 'duplicated'));
         $beforeCnt = count($this->TeamTags->readAll());
-        $after = $this->TeamTags->patch(Action::Deduplicate, array());
-        $this->assertEquals($beforeCnt - 1, count($after));
+        $this->TeamTags->patch(Action::UpdateTag, array('tag' => 'duplicated'));
+        $afterCnt = count($this->TeamTags->readAll());
+        $this->assertEquals($beforeCnt - 1, $afterCnt);
+    }
+
+    public function testDeduplicateCaseSensitive(): void
+    {
+        $id = $this->Tags->postAction(Action::Create, array('tag' => 'CAPITAL'));
+        $this->TeamTags->setId($id);
+        $beforeCnt = count($this->TeamTags->readAll());
+        $this->TeamTags->patch(Action::UpdateTag, array('tag' => 'capital'));
+        $afterCnt = count($this->TeamTags->readAll());
+        // at the end, we have the same number of tags because both have been merged
+        $this->assertEquals($beforeCnt, $afterCnt);
+        $tag = $this->TeamTags->readOne();
+        $this->assertEquals('capital', $tag['tag']);
     }
 
     public function testUpdateTag(): void

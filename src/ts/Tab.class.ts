@@ -13,9 +13,12 @@ export default class Tab {
   }
 
   // display the current tab and add an event listen so we can switch tabs
-  init(menu: HTMLElement): void {
+  init(menu: Element | null): void {
+    if (!menu) {
+      return;
+    }
     this.display(this.currentTab);
-    document.getElementById('loading-spinner').remove();
+    document.getElementById('loading-spinner')?.remove();
     // add a listener on actionable elements from the menu
     menu.querySelectorAll('[data-action="switch-tab"]').forEach(el => {
       el.addEventListener('click', () => {
@@ -45,8 +48,9 @@ export default class Tab {
     document.querySelector(`[data-tabtarget="${tabid}"]`).classList.add('selected');
     // show the tab change in the url
     const params = new URLSearchParams(document.location.search);
+    const hash = document.location.hash;
     params.set('tab', String(tabid));
-    history.replaceState(null, '', `?${params.toString()}`);
+    history.replaceState(null, '', `?${params.toString()}${hash}`);
     // remember where we are
     this.currentTab = tabid;
   }

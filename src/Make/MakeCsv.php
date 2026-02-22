@@ -1,4 +1,5 @@
-<?php declare(strict_types=1);
+<?php
+
 /**
  * @author Nicolas CARPi <nico-git@deltablot.email>
  * @copyright 2012 Nicolas CARPi
@@ -7,72 +8,56 @@
  * @package elabftw
  */
 
+declare(strict_types=1);
+
 namespace Elabftw\Make;
 
+use Override;
+
 use function date;
-use Elabftw\Exceptions\IllegalActionException;
-use Elabftw\Models\AbstractEntity;
 
 /**
- * Make a CSV file from a list of id and a type
+ * Export entities as CSV
  */
-class MakeCsv extends AbstractMakeCsv
+final class MakeCsv extends AbstractMakeCsv
 {
-    public function __construct(AbstractEntity $entity, private array $idArr)
+    public function __construct(private array $entityArr)
     {
-        parent::__construct($entity);
+        parent::__construct();
+        $this->rows = $this->getRows();
     }
 
-    /**
-     * Return a nice name for the file
-     */
+    #[Override]
     public function getFileName(): string
     {
-        return date('Y-m-d') . '-export.elabftw.csv';
+        return date('Y-m-d_H-i-s') . '-export.elabftw.csv';
     }
 
-    /**
-     * Here we populate the first row: it will be the column names
-     */
-    protected function getHeader(): array
-    {
-        return array('id', 'date', 'title', 'body', 'category', 'category_title', 'category_color', 'status', 'status_title', 'status_color', 'custom_id', 'elabid', 'rating', 'url', 'metadata', 'tags');
-    }
-
-    /**
-     * Generate an array for the requested data
-     */
+    #[Override]
     protected function getRows(): array
     {
         $rows = array();
-        foreach ($this->idArr as $id) {
-            try {
-                $this->Entity->setId((int) $id);
-                $permissions = $this->Entity->getPermissions();
-            } catch (IllegalActionException) {
-                continue;
-            }
-            if ($permissions['read']) {
-                $row = array(
-                    $this->Entity->entityData['id'],
-                    $this->Entity->entityData['date'],
-                    htmlspecialchars_decode((string) $this->Entity->entityData['title'], ENT_QUOTES | ENT_COMPAT),
-                    html_entity_decode(strip_tags(htmlspecialchars_decode((string) $this->Entity->entityData['body'], ENT_QUOTES | ENT_COMPAT))),
-                    (string) $this->Entity->entityData['category'],
-                    htmlspecialchars_decode((string) $this->Entity->entityData['category_title'], ENT_QUOTES | ENT_COMPAT),
-                    (string) $this->Entity->entityData['category_color'],
-                    (string) $this->Entity->entityData['status'],
-                    htmlspecialchars_decode((string) $this->Entity->entityData['status_title'], ENT_QUOTES | ENT_COMPAT),
-                    (string) $this->Entity->entityData['status_color'],
-                    $this->Entity->entityData['custom_id'] ?? '',
-                    $this->Entity->entityData['elabid'] ?? '',
-                    $this->Entity->entityData['rating'],
-                    $this->getUrl(),
-                    $this->Entity->entityData['metadata'] ?? '',
-                    $this->Entity->entityData['tags'] ?? '',
-                );
-                $rows[] = $row;
-            }
+        foreach ($this->entityArr as $entity) {
+            $rows[] = array(
+                'id' => $entity->entityData['id'],
+                'date' => $entity->entityData['date'],
+                'title' => htmlspecialchars_decode((string) $entity->entityData['title'], ENT_QUOTES | ENT_COMPAT),
+                'userid' => $entity->entityData['userid'],
+                'fullname' => $entity->entityData['fullname'],
+                'body' => html_entity_decode(strip_tags(htmlspecialchars_decode((string) $entity->entityData['body'], ENT_QUOTES | ENT_COMPAT))),
+                'category' => (string) $entity->entityData['category'],
+                'category_title' => htmlspecialchars_decode((string) $entity->entityData['category_title'], ENT_QUOTES | ENT_COMPAT),
+                'category_color' => (string) $entity->entityData['category_color'],
+                'status' => (string) $entity->entityData['status'],
+                'status_title' => htmlspecialchars_decode((string) $entity->entityData['status_title'], ENT_QUOTES | ENT_COMPAT),
+                'status_color' => (string) $entity->entityData['status_color'],
+                'custom_id' => $entity->entityData['custom_id'] ?? '',
+                'elabid' => $entity->entityData['elabid'] ?? '',
+                'rating' => $entity->entityData['rating'],
+                'sharelink' => $entity->entityData['sharelink'],
+                'metadata' => $entity->entityData['metadata'] ?? '',
+                'tags' => $entity->entityData['tags'] ?? '',
+            );
         }
         return $rows;
     }

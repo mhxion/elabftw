@@ -1,4 +1,6 @@
-<?php declare(strict_types=1);
+<?php
+
+declare(strict_types=1);
 /**
  * @author Nicolas CARPi <nico-git@deltablot.email>
  * @copyright 2023 Nicolas CARPi
@@ -9,8 +11,9 @@
 
 namespace Elabftw\Models;
 
-use Elabftw\Elabftw\EntityParams;
 use Elabftw\Enums\Action;
+use Elabftw\Models\Users\Users;
+use Elabftw\Params\EntityParams;
 
 class ChangelogTest extends \PHPUnit\Framework\TestCase
 {

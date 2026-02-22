@@ -1,4 +1,6 @@
-<?php declare(strict_types=1);
+<?php
+
+declare(strict_types=1);
 /**
  * @author Nicolas CARPi <nico-git@deltablot.email>
  * @copyright 2012 Nicolas CARPi
@@ -9,62 +11,110 @@
 
 namespace Elabftw\Models;
 
+use Elabftw\Elabftw\Db;
 use Elabftw\Enums\Action;
-use Elabftw\Exceptions\ImproperActionException;
+use Elabftw\Enums\BasePermissions;
+use Elabftw\Models\Links\Experiments2ItemsLinks;
+use Elabftw\Models\Links\ItemsTypes2ItemsLinks;
+use Elabftw\Models\Users\AuthenticatedUser;
+use Elabftw\Models\Users\Users;
+use Elabftw\Traits\TestsUtilsTrait;
+use PDO;
 
 class LinksTest extends \PHPUnit\Framework\TestCase
 {
+    use TestsUtilsTrait;
+
+    private Db $Db;
+
     private Experiments $Experiments;
 
     private Items $Items;
 
+    private Templates $Templates;
+
+    private ItemsTypes $ItemsTypes;
+
     protected function setUp(): void
     {
-        $this->Experiments = new Experiments(new Users(1, 1), 3);
-        $this->Items = new Items(new Users(1, 1), 3);
-        $this->Experiments->ExperimentsLinks->setId(4);
+        $this->Db = Db::getConnection();
+        $user = $this->getRandomUserInTeam(1);
+        $this->Experiments = $this->getFreshExperimentWithGivenUser($user);
+        $this->Items = $this->getFreshItemWithGivenUser($user);
+        $this->Experiments->ExperimentsLinks->setId($this->Experiments->id);
+        $this->Templates = $this->getFreshTemplate();
+        $this->ItemsTypes = $this->getFreshItemType();
     }
 
-    public function testGetPage(): void
+    public function testGetApiPath(): void
     {
-        $this->assertIsString($this->Experiments->ExperimentsLinks->getPage());
+        $this->assertEquals(sprintf('api/v2/experiments/%d/experiments2experiments/', $this->Experiments->id), $this->Experiments->ExperimentsLinks->getApiPath());
     }
 
     public function testCreateReadDestroy(): void
     {
-        $this->Experiments->ItemsLinks->setId(1);
+        // Experiment with links to resources
+        $this->Experiments->ItemsLinks->setId($this->Items->id);
         $this->Experiments->ItemsLinks->postAction(Action::Create, array());
         $count = count($this->Experiments->ItemsLinks->readAll());
         $this->assertEquals(1, $count);
         $this->Experiments->ItemsLinks->destroy();
         $this->assertEquals(0, count($this->Experiments->ItemsLinks->readAll()));
 
-        $this->Experiments->ExperimentsLinks->setId(4);
+        // Experiment with links to other experiments
+        $this->Experiments->ExperimentsLinks->setId($this->Experiments->id - 1);
         $this->Experiments->ExperimentsLinks->postAction(Action::Create, array());
         $count = count($this->Experiments->ExperimentsLinks->readAll());
         $this->assertEquals(1, $count);
         $this->Experiments->ExperimentsLinks->destroy();
         $this->assertEquals(0, count($this->Experiments->ExperimentsLinks->readAll()));
+
+        // Exp Templates with links to experiments
+        $this->Templates->ExperimentsLinks->setId($this->Experiments->id);
+        $this->Templates->ExperimentsLinks->postAction(Action::Create, array());
+        $count = count($this->Templates->ExperimentsLinks->readAll());
+        $this->assertEquals(1, $count);
+        $this->Templates->ExperimentsLinks->destroy();
+        $this->assertEquals(0, count($this->Templates->ExperimentsLinks->readAll()));
+
+        // Resource Template with links to experiments
+        $this->ItemsTypes->ExperimentsLinks->setId($this->Experiments->id);
+        $this->ItemsTypes->ExperimentsLinks->postAction(Action::Create, array());
+        $count = count($this->ItemsTypes->ExperimentsLinks->readAll());
+        $this->assertEquals(1, $count);
+        $this->ItemsTypes->ExperimentsLinks->destroy();
+        $this->assertEquals(0, count($this->ItemsTypes->ExperimentsLinks->readAll()));
+
+        // Resource Template with links to items
+        $this->ItemsTypes->ItemsLinks->setId($this->Items->id);
+        $this->ItemsTypes->ItemsLinks->postAction(Action::Create, array());
+        $count = count($this->ItemsTypes->ItemsLinks->readAll());
+        $this->assertEquals(1, $count);
+        $this->ItemsTypes->ItemsLinks->destroy();
+        $this->assertEquals(0, count($this->ItemsTypes->ItemsLinks->readAll()));
     }
 
     public function testImport(): void
     {
         // create a link in a db item
-        $Items = new Items(new Users(1, 1), 1);
-        $Items->ItemsLinks->setId(1);
-        $Items->ItemsLinks->postAction(Action::Create, array());
+        $Items1 = $this->getFreshItem();
+        $Items2 = $this->getFreshItem();
+        $Items1->ItemsLinks->setId($Items2->id);
+        $Items1->ItemsLinks->postAction(Action::Create, array());
         // now import this in our experiment like if we click the import links button
-        $Links = new ItemsLinks($this->Experiments, $Items->id);
+        $Links = new Experiments2ItemsLinks($this->Experiments, $Items1->id);
         $this->assertIsInt($Links->postAction(Action::Duplicate, array()));
-        $this->Experiments->ItemsLinks->setId(1);
+        $this->Experiments->ItemsLinks->setId($Items1->id);
         $this->assertIsInt($this->Experiments->ItemsLinks->postAction(Action::Duplicate, array()));
-        $this->Experiments->ExperimentsLinks->setId(1);
+        $this->Experiments->ExperimentsLinks->setId($this->Experiments->id);
         $this->assertIsInt($this->Experiments->ExperimentsLinks->postAction(Action::Duplicate, array()));
-    }
-
-    public function testPatch(): void
-    {
-        $this->assertIsArray($this->Experiments->ItemsLinks->patch(Action::Duplicate, array()));
+        // try with a resource template
+        $Links = new ItemsTypes2ItemsLinks($this->Experiments, $Items1->id);
+        $this->assertIsInt($Links->postAction(Action::Duplicate, array()));
+        $this->ItemsTypes->ItemsLinks->setId($Items1->id);
+        $this->assertIsInt($this->ItemsTypes->ItemsLinks->postAction(Action::Duplicate, array()));
+        $this->ItemsTypes->ExperimentsLinks->setId($this->Experiments->id);
+        $this->assertIsInt($this->ItemsTypes->ExperimentsLinks->postAction(Action::Duplicate, array()));
     }
 
     public function testReadOne(): void
@@ -83,23 +133,178 @@ class LinksTest extends \PHPUnit\Framework\TestCase
 
     public function testLinksFromTemplate(): void
     {
-        $Templates = new Templates(new Users(1, 1));
+        $Templates = new Templates($this->getRandomUserInTeam(1));
         // create a template
-        $id = $Templates->postAction(Action::Create, array('title' => 'some template'));
+        $id = $Templates->create(title: 'some template');
         $Templates->setId($id);
         // add an item link
-        $Templates->ItemsLinks->setId(1);
+        $Item = $this->getFreshItemWithGivenUser($Templates->Users);
+        $Templates->ItemsLinks->setId($Item->id);
         $Templates->ItemsLinks->postAction(Action::Create, array());
         // now create an experiment from that template
-        $expid = $this->Experiments->postAction(Action::Create, array('category_id' => $id));
+        $expid = $this->Experiments->postAction(Action::Create, array('template' => $id));
         $this->Experiments->setId($expid);
         $this->assertEquals(1, count($this->Experiments->ItemsLinks->readAll()));
     }
 
     public function testReadExperimentsLinksFromTemplate(): void
     {
-        $Templates = new Templates(new Users(1, 1), 1);
-        $this->expectException(ImproperActionException::class);
-        $Templates->ExperimentsLinks->readAll();
+        $Templates = new Templates($this->getRandomUserInTeam(1));
+        $tplid = $Templates->create();
+        $Templates->setId($tplid);
+        $this->assertEmpty($Templates->ExperimentsLinks->readAll());
+        $Templates->ExperimentsLinks->setId($this->Experiments->id);
+        $Templates->ExperimentsLinks->postAction(Action::Create, array());
+        $this->assertEquals(1, count($Templates->ExperimentsLinks->readAll()));
+    }
+
+    public function testObeyReadPermissionAfterLinksImportWithinTeam(): void
+    {
+        // compare to #5523, #5524
+        // In the most simple case, we stay within a given team
+
+        // User 1 creates experiment A that is visible to the team
+        $Experiments = $this->getFreshExperiment();
+        $ExperimentAId = $Experiments->create(
+            title: 'Experiment A',
+            canreadBase: BasePermissions::Team,
+        );
+
+        // User 1 creates experiment B that is visible only to themself
+        $secretTitle = 'Experiment B - This title shall not be visible to user 2 after importing links';
+        $ExperimentBId = $Experiments->create(
+            title: $secretTitle,
+            canreadBase: BasePermissions::User,
+        );
+
+        // Experiment A links to experiment B
+        $Experiments->setId($ExperimentAId);
+        $Experiments->ExperimentsLinks->setId($ExperimentBId);
+        $Experiments->ExperimentsLinks->postAction(Action::Create, array());
+
+        // User 2 creates experiment C and adds a link to experiment A
+        $Experiments = new Experiments(new Users(2, 1));
+        $ExperimentCId = $Experiments->create(
+            title: 'Experiment C',
+            canreadBase: BasePermissions::Team,
+        );
+        $Experiments->setId($ExperimentCId);
+        $Experiments->ExperimentsLinks->setId($ExperimentAId);
+        $Experiments->ExperimentsLinks->postAction(Action::Create, array());
+
+        // User 2 imports the links from experiment A to experiment C
+        $Experiments->ExperimentsLinks->postAction(Action::Duplicate, array());
+
+        // User 2 should only see the link to experiment A but not the imported link to experiment B
+        $titles = array_column($Experiments->ExperimentsLinks->readAll(), 'title');
+        $this->assertEquals(1, count($titles));
+        $this->assertNotContains($secretTitle, $titles);
+
+        // User 1 should see both links (i.e to experiments A and B) in experiment C
+        $Experiments = new Experiments(new Users(1, 1), $ExperimentCId);
+        $titles = array_column($Experiments->ExperimentsLinks->readAll(), 'title');
+        $this->assertEquals(2, count($titles));
+        $this->assertContains($secretTitle, $titles);
+        $this->assertContains('Experiment A', $titles);
+    }
+
+    public function testObeyReadPermissionAfterLinksImportAcrossTeams(): void
+    {
+        // But perhaps more importantly, we need to make sure that the permissions are obeyed when importing links across teams
+
+        // User 1 from team alpha creates experiment A that is visible to the organization
+        $Experiments = $this->getFreshExperiment();
+        $ExperimentAId = $Experiments->create(
+            title: 'Experiment A',
+            canreadBase: BasePermissions::Organization,
+        );
+
+        // User 1 creates experiment B that is visible to their team
+        $secretTitle = 'Experiment B - This title shall not be visible to user 5 after importing links';
+        $ExperimentBId = $Experiments->create(
+            title: $secretTitle,
+            canreadBase: BasePermissions::Team,
+        );
+
+        // Experiment A links to experiment B
+        $Experiments->setId($ExperimentAId);
+        $Experiments->ExperimentsLinks->setId($ExperimentBId);
+        $Experiments->ExperimentsLinks->postAction(Action::Create, array());
+
+        // User 5 from team bravo creates experiment C and adds a link to experiment A
+        $Experiments = new Experiments(new Users(5, 2));
+        $ExperimentCId = $Experiments->create(
+            title: 'Experiment C',
+            canreadBase: BasePermissions::Organization,
+        );
+        $Experiments->setId($ExperimentCId);
+        $Experiments->ExperimentsLinks->setId($ExperimentAId);
+        $Experiments->ExperimentsLinks->postAction(Action::Create, array());
+
+        // User 2 imports the links from experiment A to experiment C
+        $Experiments->ExperimentsLinks->postAction(Action::Duplicate, array());
+
+        // User 2 should only see the link to experiment A but not the imported link to experiment B
+        $titles = array_column($Experiments->ExperimentsLinks->readAll(), 'title');
+        $this->assertEquals(1, count($titles));
+        $this->assertNotContains($secretTitle, $titles);
+
+        // User 1 should see both links (i.e to experiments A and B) in experiment C
+        // Need AuthenticatedUser to read across teams (see Permissions::getCan)
+        $Experiments = new Experiments(new AuthenticatedUser(1, 1), $ExperimentCId);
+        $titles = array_column($Experiments->ExperimentsLinks->readAll(), 'title');
+        $this->assertEquals(2, count($titles));
+        $this->assertContains($secretTitle, $titles);
+        $this->assertContains('Experiment A', $titles);
+    }
+
+    public function testCreateIgnoresSelfLinking(): void
+    {
+        $titles = array_column($this->Experiments->ExperimentsLinks->readAll(), 'title');
+        $this->Experiments->ExperimentsLinks->setId($this->Experiments->id);
+        $result = $this->Experiments->ExperimentsLinks->postAction(Action::Create, array());
+        $this->assertSame(0, $result);
+        $titlesAfter = array_column($this->Experiments->ExperimentsLinks->readAll(), 'title');
+        $this->assertSame(count($titles), count($titlesAfter));
+    }
+
+    /*
+     * Ensure ItemsTypes related links are not bound to wrong entities (see #5875).
+     *
+     * Before fix #6280, creating an ItemsType whose ID collided with an existing Item
+     * caused ItemsTypes->ItemsLinks->readRelated() to return the Item’s links.
+     * We reproduce this by force-inserting a template with the exact same ID as ItemB.
+     */
+    public function testItemsTypesRelatedLinksAreNotCorrupted(): void
+    {
+        // create A → B link so ItemB has related links for the collision test.
+        $ItemA = $this->getFreshItem();
+        $ItemB = $this->getFreshItem();
+        $ItemA->ItemsLinks->setId($ItemB->id);
+        $ItemA->ItemsLinks->postAction(Action::Create, array());
+
+        // insert an ItemsType with the exact same ID as ItemB.
+        // We must insert manually: create() cannot create entities with a preassigned ID.
+        $User = $this->getRandomUserInTeam(1);
+        $req = $this->Db->prepare('INSERT INTO items_types (id, title, userid, team, canread, canwrite, canbook, canread_target, canwrite_target) VALUES (:id, :title, :userid, :team, :canread, :canwrite, :canbook, :canread_target, :canwrite_target)');
+        $req->bindValue(':id', $ItemB->id, PDO::PARAM_INT);
+        $req->bindValue(':title', 'Template X');
+        $req->bindValue(':userid', $User->userData['userid'], PDO::PARAM_INT);
+        $req->bindValue(':team', $User->team, PDO::PARAM_INT);
+        $req->bindValue(':canread', AbstractEntity::EMPTY_CAN_JSON);
+        $req->bindValue(':canwrite', AbstractEntity::EMPTY_CAN_JSON);
+        $req->bindValue(':canbook', AbstractEntity::EMPTY_CAN_JSON);
+        $req->bindValue(':canread_target', AbstractEntity::EMPTY_CAN_JSON);
+        $req->bindValue(':canwrite_target', AbstractEntity::EMPTY_CAN_JSON);
+        $req->execute();
+
+        $ItemsTypes = new ItemsTypes($User, $ItemB->id);
+        $this->assertSame($ItemsTypes->id, $ItemB->id);
+
+        // before fix #5875, this returned the link from items2items. Now, must return ZERO links.
+        $itemsLinks = $ItemB->ItemsLinks->readRelated();
+        $templateLinks = $ItemsTypes->ItemsLinks->readRelated();
+        $this->assertNotEquals($itemsLinks, $templateLinks);
+        $this->assertEmpty($ItemsTypes->ItemsLinks->readAll());
     }
 }

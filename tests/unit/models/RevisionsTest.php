@@ -1,4 +1,6 @@
-<?php declare(strict_types=1);
+<?php
+
+declare(strict_types=1);
 /**
  * @author Nicolas CARPi <nico-git@deltablot.email>
  * @copyright 2012 Nicolas CARPi
@@ -11,9 +13,15 @@ namespace Elabftw\Models;
 
 use Elabftw\Enums\Action;
 use Elabftw\Exceptions\ImproperActionException;
+use Elabftw\Models\Users\Users;
+use Elabftw\Traits\TestsUtilsTrait;
 
 class RevisionsTest extends \PHPUnit\Framework\TestCase
 {
+    use TestsUtilsTrait;
+
+    private const int MAX_REVISIONS = 10;
+
     private Users $Users;
 
     private Experiments $Experiments;
@@ -22,19 +30,19 @@ class RevisionsTest extends \PHPUnit\Framework\TestCase
 
     protected function setUp(): void
     {
-        $this->Users = new Users(1, 1);
-        $this->Experiments = new Experiments($this->Users, 7);
-        $this->Revisions = new Revisions($this->Experiments, 10, 100, 10);
+        $this->Users = $this->getRandomUserInTeam(1);
+        $this->Experiments = $this->getFreshExperimentWithGivenUser($this->Users);
+        $this->Revisions = new Revisions($this->Experiments, self::MAX_REVISIONS, 1, 10);
     }
 
-    public function testGetPage(): void
+    public function testGetApiPath(): void
     {
-        $this->assertSame('api/v2/experiments/7/revisions/', $this->Revisions->getPage());
+        $this->assertSame(sprintf('api/v2/experiments/%d/revisions/', $this->Experiments->id), $this->Revisions->getApiPath());
     }
 
     public function testCreate(): void
     {
-        $this->assertIsInt($this->Revisions->postAction(Action::Create, array('body' => 'Ohaiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiii')));
+        $this->assertIsInt($this->Revisions->create('Ohaiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiii'));
     }
 
     public function testReadAll(): void
@@ -44,31 +52,27 @@ class RevisionsTest extends \PHPUnit\Framework\TestCase
 
     public function testRestore(): void
     {
-        $Experiment = new Experiments($this->Users, 1);
-        $new = $Experiment->create(0);
-        $Experiment->setId($new);
-        $this->Revisions = new Revisions($Experiment, 10, 100, 10);
-        $id = $this->Revisions->postAction(Action::Create, array('body' => 'Ohai'));
+        $id = $this->Revisions->create('Ohai');
         $this->Revisions->setId($id);
         $this->assertIsArray($this->Revisions->patch(Action::Replace, array()));
     }
 
     public function testRestoreLocked(): void
     {
-        $Experiment = new Experiments($this->Users, 1);
-        $new = $Experiment->create(0);
-        $Experiment->setId($new);
-        $this->Revisions = new Revisions($Experiment, 10, 100, 10);
-        $id = $this->Revisions->postAction(Action::Create, array('body' => 'Ohai'));
+        $id = $this->Revisions->create('Ohai');
         $this->Revisions->setId($id);
-        $Experiment->patch(Action::Lock, array());
+        $this->Experiments->patch(Action::Lock, array());
         $this->expectException(ImproperActionException::class);
         $this->Revisions->patch(Action::Replace, array());
     }
 
-    public function testPrune(): void
+    // create a bunch of revisions and ensure we don't have more than max number
+    public function testMaxNumber(): void
     {
-        $this->assertEquals(0, $this->Revisions->prune());
+        for ($i = 0; $i < 12; $i++) {
+            $this->Revisions->create('wéééééééééé' . $i);
+        }
+        $this->assertSame(self::MAX_REVISIONS, count($this->Revisions->readAll()));
     }
 
     public function testDestroy(): void

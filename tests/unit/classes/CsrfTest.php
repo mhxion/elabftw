@@ -1,4 +1,6 @@
-<?php declare(strict_types=1);
+<?php
+
+declare(strict_types=1);
 /**
  * @author Nicolas CARPi <nico-git@deltablot.email>
  * @copyright 2012 Nicolas CARPi
@@ -9,7 +11,7 @@
 
 namespace Elabftw\Elabftw;
 
-use Elabftw\Exceptions\InvalidCsrfTokenException;
+use Elabftw\Exceptions\UnauthorizedException;
 use Symfony\Component\HttpFoundation\Request;
 
 class CsrfTest extends \PHPUnit\Framework\TestCase
@@ -33,7 +35,7 @@ class CsrfTest extends \PHPUnit\Framework\TestCase
         $Request = Request::create('/', 'POST');
         $Request->headers->set('X-Requested-With', 'XMLHttpRequest');
         $Csrf = new Csrf($Request);
-        $this->expectException(InvalidCsrfTokenException::class);
+        $this->expectException(UnauthorizedException::class);
         $Csrf->validate();
     }
 
@@ -41,7 +43,7 @@ class CsrfTest extends \PHPUnit\Framework\TestCase
     {
         $Request = Request::create('/', 'POST');
         $Csrf = new Csrf($Request);
-        $this->expectException(InvalidCsrfTokenException::class);
+        $this->expectException(UnauthorizedException::class);
         $Csrf->validate();
     }
 

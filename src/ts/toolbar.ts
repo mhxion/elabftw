@@ -5,111 +5,164 @@
  * @license AGPL-3.0
  * @package elabftw
  */
-import { getEntity, reloadElement } from './misc';
-import { Api } from './Apiv2.class';
-import EntityClass from './Entity.class';
-import i18next from 'i18next';
-import { Action } from './interfaces';
+import $ from 'jquery';
+import { ApiC } from './api';
+import { entity } from './getEntity';
+import { on } from './handlers';
+import i18next from './i18n';
+import { Action, Model } from './interfaces';
+import { collectForm, reloadElements } from './misc';
+import { notify } from './notify';
 
-document.addEventListener('DOMContentLoaded', () => {
+if (document.getElementById('topToolbar')) {
+  on(Action.Duplicate, () => {
+    const copyFiles = (document.getElementById('duplicateKeepFilesSelect') as HTMLInputElement);
+    const linkToOriginalExperiment = (document.getElementById('duplicateLinkToOriginal') as HTMLInputElement);
+    // Ensure the link to original exists because this feature is not available for Template entities
+    ApiC.post2location(`${entity.type}/${entity.id}`, {
+      action: Action.Duplicate,
+      copyFiles: Boolean(copyFiles.checked),
+      linkToOriginal: Boolean(linkToOriginalExperiment?.checked ?? false)},
+    ).then(id => {
+      window.location.href = `?mode=edit&id=${id}`;
+    });
+  });
 
-  if (!document.getElementById('info')) {
-    return;
-  }
+  on(Action.Timestamp, () => {
+    ApiC.patch(`${entity.type}/${entity.id}`, {action: Action.Timestamp}).then(() => {
+      reloadElements(['requestActionsDiv', 'isTimestampedByInfoDiv']);
+    }).catch(error => {
+      notify.error(error);
+    });
+  });
 
-  // holds info about the page through data attributes
-  const about = document.getElementById('info').dataset;
+  on(Action.Bloxberg, () => {
+    const overlay = document.createElement('div');
+    overlay.id = 'loadingOverlay';
+    const loading = document.createElement('p');
+    const ring = document.createElement('div');
+    ring.classList.add('lds-dual-ring');
+    // see https://loading.io/css/
+    const emptyDiv = document.createElement('div');
+    ring.appendChild(emptyDiv);
+    ring.appendChild(emptyDiv);
+    ring.appendChild(emptyDiv);
+    ring.appendChild(emptyDiv);
+    overlay.classList.add('full-screen-overlay');
+    loading.appendChild(ring);
+    overlay.appendChild(loading);
+    document.getElementById('container').append(overlay);
+    ApiC.patch(`${entity.type}/${entity.id}`, {action: Action.Bloxberg})
+      // reload uploaded files on success
+      .then(() => reloadElements(['uploadsDiv']))
+      // remove overlay in all cases
+      .finally(() => document.getElementById('container').removeChild(document.getElementById('loadingOverlay')));
+  });
 
-  // only run in view/edit mode
-  const allowedPages = ['view', 'edit', 'template-view', 'template-edit'];
-  if (!allowedPages.includes(about.page)) {
-    return;
-  }
+  on(Action.Sign, (_, event: Event) => {
+    event.preventDefault();
+    const form = document.getElementById('sigPassphraseForm') as HTMLFormElement;
+    const params = collectForm(form);
+    params['action'] = Action.Sign;
+    ApiC.patch(`${entity.type}/${entity.id}`, params).then(() => {
+      reloadElements(['commentsDiv', 'requestActionsDiv']);
+      form.reset();
+      $('#addSignatureModal').modal('hide');
+    });
+  });
 
-  const entity = getEntity();
-  const EntityC = new EntityClass(entity.type);
-  const ApiC = new Api();
+  on(Action.RequestAction, (_, event: Event) => {
+    event.preventDefault();
+    const form = document.getElementById('requestActionActionSelectForm') as HTMLFormElement;
+    const params = collectForm(form);
+    const rawUser = String(params['requested_user'] ?? '').trim();
+    const userId = parseInt(rawUser.split(' ')[0], 10);
+    if (!Number.isFinite(userId)) {
+      notify.error(i18next.t('invalid-info'));
+      return;
+    }
+    ApiC.post(`${entity.type}/${entity.id}/request_actions`, {
+      action: Action.RequestAction,
+      target_action: params['requested_action'],
+      target_userid: userId,
+    }).then(() => {
+      reloadElements(['requestActionsDiv']);
+      $('#requestActionModal').modal('hide');
+    }).catch(error => notify.error(error));
+  });
 
-  // Add click listener and do action based on which element is clicked
-  document.querySelector('.real-container').addEventListener('click', (event) => {
-    const el = (event.target as HTMLElement);
-    // DUPLICATE
-    if (el.matches('[data-action="duplicate-entity"]')) {
-      let queryString = '';
-      let page = '';
-      if (about.page.startsWith('template-')) {
-        queryString = 'tab=3&template';
-        page = '/ucp.php';
-      }
-
-      EntityC.duplicate(entity.id).then(resp => window.location.href = `${page}?mode=edit&${queryString}id=${resp.headers.get('location').split('/').pop()}`);
-
-    // TOGGLE LOCK
-    } else if (el.matches('[data-action="lock-entity"]')) {
+  on('do-requestable-action', (el: HTMLElement) => {
+    switch (el.dataset.target) {
+    case Action.Archive:
+      // reload the page to avoid further actions on the entity (in edit mode), also refreshing gets to "You cannot edit it!" page. (See #5552)
+      ApiC.patch(`${entity.type}/${entity.id}`, {action: Action.Archive})
+        .then(() => window.location.href = `?mode=view&id=${entity.id}`);
+      break;
+    case Action.Unarchive:
+      ApiC.patch(`${entity.type}/${entity.id}`, {action: Action.Unarchive})
+        .then(() => window.location.href = `?mode=view&id=${entity.id}`);
+      break;
+    case Action.Lock:
       // reload the page to change the icon and make the edit button disappear (#1897)
-      EntityC.lock(entity.id).then(() => window.location.href = `?mode=view&id=${entity.id}`);
-
-    // SHARE
-    } else if (el.matches('[data-action="share"]')) {
-      EntityC.read(entity.id).then(json => {
-        const link = (document.getElementById('shareLinkInput') as HTMLInputElement);
-        link.value = json.sharelink;
-        link.toggleAttribute('hidden');
-        link.focus();
-        link.select();
-      });
-
-    // TOGGLE PINNED
-    } else if (el.matches('[data-action="toggle-pin"]')) {
-      let id = entity.id;
-      if (isNaN(id) || id === null) {
-        id = parseInt(el.dataset.id, 10);
-      }
-
-      ApiC.patch(`${entity.type}/${id}`, {'action': Action.Pin}).then(() => {
-        // toggle appearance of button and icon
-        ['bgnd-gray', 'hl-hover-gray'].forEach(cl => el.classList.toggle(cl));
-        el.querySelector('i').classList.toggle('color-weak');
-      });
-
-    // TIMESTAMP button in modal
-    } else if (el.matches('[data-action="timestamp"]')) {
-      EntityC.timestamp(entity.id).then(() => {
-        reloadElement('isTimestampedByInfoDiv');
-      });
-
-    // BLOXBERG
-    } else if (el.matches('[data-action="bloxberg"]')) {
-      const overlay = document.createElement('div');
-      overlay.id = 'loadingOverlay';
-      const loading = document.createElement('p');
-      const ring = document.createElement('div');
-      ring.classList.add('lds-dual-ring');
-      // see https://loading.io/css/
-      const emptyDiv = document.createElement('div');
-      ring.appendChild(emptyDiv);
-      ring.appendChild(emptyDiv);
-      ring.appendChild(emptyDiv);
-      ring.appendChild(emptyDiv);
-      overlay.classList.add('full-screen-overlay');
-      loading.appendChild(ring);
-      overlay.appendChild(loading);
-      document.getElementById('container').append(overlay);
-      ApiC.patch(`${entity.type}/${entity.id}`, {'action': Action.Bloxberg})
-        // reload uploaded files on success
-        .then(() => reloadElement('uploadsDiv'))
-        // remove overlay in all cases
-        .finally(() => document.getElementById('container').removeChild(document.getElementById('loadingOverlay')));
-    // ARCHIVE ENTITY
-    } else if (el.matches('[data-action="archive-entity"]')) {
-      ApiC.patch(`${entity.type}/${entity.id}`, {action: Action.Archive}).then(() => reloadElement('isArchivedDiv'));
-
-    // DESTROY ENTITY
-    } else if (el.matches('[data-action="destroy"]')) {
-      if (confirm(i18next.t('generic-delete-warning'))) {
-        const path = window.location.pathname;
-        EntityC.destroy(entity.id).then(() => window.location.replace(path.split('/').pop()));
-      }
+      ApiC.patch(`${entity.type}/${entity.id}`, {action: Action.Lock})
+        .then(() => window.location.href = `?mode=view&id=${entity.id}`);
+      break;
+    case Action.Review:
+      ApiC.patch(`${entity.type}/${entity.id}`, {action: Action.Review})
+        .then(() => window.location.href = `?mode=view&id=${entity.id}`);
+      break;
+    case Action.Timestamp:
+      $('#timestampModal').modal('toggle');
+      break;
+    case Action.Sign:
+      $('#addSignatureModal').modal('toggle');
+      break;
     }
   });
-});
+
+  on(Action.CancelRequestableAction, (el: HTMLElement) => {
+    if (confirm(i18next.t('generic-delete-warning'))) {
+      ApiC.delete(`${entity.type}/${entity.id}/request_actions/${el.dataset.id}`)
+        .then(() => el.parentElement.parentElement.parentElement.parentElement.remove());
+    }
+  });
+
+  on('export-to', (el: HTMLElement) => {
+    const format = el.dataset.format;
+    const changelog = (document.getElementById(`${format}_exportWithChangelog`) as HTMLInputElement).checked ? 1 : 0;
+    const classification = (document.getElementById(`${format}_exportClassification`) as HTMLSelectElement).value;
+    let json = 0;
+    if (format === 'zip') {
+      json = (document.getElementById(`${format}_exportJson`) as HTMLInputElement).checked ? 1 : 0;
+    }
+    const finalFormat = (document.getElementById(`${format}_exportPdfa`) as HTMLInputElement).checked ? format + 'a' : format;
+    window.open(`/api/v2/${el.dataset.type}/${el.dataset.id}?format=${finalFormat}&changelog=${changelog}&json=${json}&classification=${classification}`, '_blank');
+  });
+
+  on('export-to-qrpng', (el: HTMLElement) => {
+    const size = (document.getElementById('qrpng_exportSize') as HTMLInputElement).value;
+    const title = (document.getElementById('qrpng_exportTitle') as HTMLInputElement).checked ? 1: 0;
+    const titleLines = (document.getElementById('qrpng_exportTitleLines') as HTMLInputElement).value;
+    const titleChars = (document.getElementById('qrpng_exportTitleChars') as HTMLInputElement).value;
+    window.open(`/api/v2/${el.dataset.type}/${el.dataset.id}?format=qrpng&size=${size}&withTitle=${title}&titleLines=${titleLines}&titleChars=${titleChars}`, '_blank');
+  });
+
+  on(Action.Destroy, () => {
+    if (confirm(i18next.t('generic-delete-warning'))) {
+      const path = window.location.pathname;
+      ApiC.delete(`${entity.type}/${entity.id}`).then(
+        () => window.location.replace(path.split('/').pop()));
+    }
+  });
+
+  on(Action.CreateProcurementRequest, () => {
+    const input = (document.getElementById('procurementRequestQtyInput') as HTMLInputElement);
+    const qty = parseInt(input.value, 10);
+    // sanity check
+    if (qty < 1) {
+      notify.error('invalid-info');
+      return;
+    }
+    ApiC.post(`${Model.Team}/current/procurement_requests`, {entity_id: entity.id, qty_ordered: qty});
+  });
+}

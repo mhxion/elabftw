@@ -1,4 +1,5 @@
-<?php declare(strict_types=1);
+<?php
+
 /**
  * @package   Elabftw\Elabftw
  * @author    Nicolas CARPi <nico-git@deltablot.email>
@@ -7,22 +8,20 @@
  * @see       https://www.elabftw.net Official website
  */
 
+declare(strict_types=1);
+
 namespace Elabftw\Make;
 
-use function dirname;
 use Elabftw\Elabftw\Db;
-use Elabftw\Elabftw\FsTools;
-use Elabftw\Models\AbstractEntity;
-use Elabftw\Models\Config;
-use Elabftw\Traits\UploadTrait;
+use Elabftw\Interfaces\FileMakerInterface;
+use Symfony\Component\HttpFoundation\Response;
+use Override;
 
 /**
  * Mother class of the Make* services
  */
-abstract class AbstractMake
+abstract class AbstractMake implements FileMakerInterface
 {
-    use UploadTrait;
-
     // a place to gather errors or warnings generated during the making
     public array $errors = array();
 
@@ -32,7 +31,7 @@ abstract class AbstractMake
 
     protected string $contentType = 'application/octet-stream';
 
-    public function __construct(protected AbstractEntity $Entity)
+    public function __construct()
     {
         $this->Db = Db::getConnection();
     }
@@ -40,39 +39,34 @@ abstract class AbstractMake
     /**
      * The filename for what we are making
      */
+    #[Override]
     abstract public function getFileName(): string;
 
+    #[Override]
     public function getContentSize(): int
     {
         return $this->contentSize;
     }
 
+    #[Override]
     public function getContentType(): string
     {
         return $this->contentType;
     }
 
-    /**
-     * Get the contents of assets/pdf.min.css
-     */
-    protected function getCss(): string
+    #[Override]
+    public function getResponse(): Response
     {
-        $assetsFs = FsTools::getFs(dirname(__DIR__, 2) . '/web/assets');
-        return $assetsFs->read('pdf.min.css');
-    }
-
-    /**
-     * Return the url of the item or experiment
-     *
-     * @return string url to the item/experiment
-     */
-    protected function getUrl(?int $entityId = null): string
-    {
-        return sprintf(
-            '%s/%s.php?mode=view&id=%d',
-            Config::fromEnv('SITE_URL'),
-            $this->Entity->page,
-            $entityId ?? $this->Entity->id ?? 0,
+        return new Response(
+            $this->getFileContent(),
+            200,
+            array(
+                'Content-Type' => $this->getContentType(),
+                'Content-Size' => $this->getContentSize(),
+                'Content-disposition' => 'inline; filename="' . $this->getFileName() . '"',
+                'Cache-Control' => 'no-store',
+                'Last-Modified' => gmdate('D, d M Y H:i:s') . ' GMT',
+            )
         );
     }
 }

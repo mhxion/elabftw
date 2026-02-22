@@ -1,4 +1,6 @@
-<?php declare(strict_types=1);
+<?php
+
+declare(strict_types=1);
 /**
  * @author Nicolas CARPi <nico-git@deltablot.email>
  * @copyright 2023 Nicolas CARPi
@@ -10,8 +12,10 @@
 namespace Elabftw\Models;
 
 use Elabftw\Enums\Action;
+use Elabftw\Models\Notifications\SelfIsValidated;
 use Elabftw\Models\Notifications\StepDeadline;
 use Elabftw\Models\Notifications\UserNotifications;
+use Elabftw\Models\Users\Users;
 
 class UserNotificationsTest extends \PHPUnit\Framework\TestCase
 {
@@ -25,9 +29,9 @@ class UserNotificationsTest extends \PHPUnit\Framework\TestCase
         $this->UserNotifications = new UserNotifications($this->Users, 1);
     }
 
-    public function testGetPage(): void
+    public function testGetApiPath(): void
     {
-        $this->assertEquals('users/1/notifications/', $this->UserNotifications->getPage());
+        $this->assertEquals('api/v2/users/1/notifications/', $this->UserNotifications->getApiPath());
     }
 
     public function testReadAll(): void
@@ -42,16 +46,17 @@ class UserNotificationsTest extends \PHPUnit\Framework\TestCase
 
     public function testReadOne(): void
     {
+        $Notif = new SelfIsValidated();
+        $id = $Notif->create(1);
+        $this->UserNotifications->setId($id);
         $this->assertIsArray($this->UserNotifications->readOne());
-    }
-
-    public function testPostAction(): void
-    {
-        $this->assertEquals(1, $this->UserNotifications->postAction(Action::Create, array()));
     }
 
     public function testPatch(): void
     {
+        $Notif = new SelfIsValidated();
+        $id = $Notif->create(1);
+        $this->UserNotifications->setId($id);
         $this->assertIsArray($this->UserNotifications->patch(Action::Update, array()));
     }
 

@@ -1,4 +1,5 @@
-<?php declare(strict_types=1);
+<?php
+
 /**
  * @author Nicolas CARPi <nico-git@deltablot.email>
  * @copyright 2012 Nicolas CARPi
@@ -7,14 +8,18 @@
  * @package elabftw
  */
 
+declare(strict_types=1);
+
 namespace Elabftw\Elabftw;
 
 use Elabftw\Controllers\DownloadController;
+use Elabftw\Enums\Messages;
 use Elabftw\Enums\Storage;
 use Elabftw\Exceptions\IllegalActionException;
 use Elabftw\Models\Config;
-use function error_reporting;
 use Exception;
+
+use function error_reporting;
 use function set_time_limit;
 use function strpos;
 
@@ -53,5 +58,5 @@ try {
     $Response->send();
 } catch (Exception $e) {
     $App->Log->error('', array(array('userid' => $App->Session->get('userid')), array('Download error', $e)));
-    $App->Session->getFlashBag()->add('ko', Tools::error());
+    $App->Session->getFlashBag()->add('ko', Messages::GenericError->toHuman());
 }

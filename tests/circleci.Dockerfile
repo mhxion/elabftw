@@ -11,7 +11,7 @@ COPY ../bin /elabftw/bin
 COPY ../src /elabftw/src
 COPY ../tests /elabftw/tests
 COPY ../web /elabftw/web
-COPY ../.eslintrc.js /elabftw
+COPY ../eslint.config.mjs /elabftw
 COPY ../.php-cs-fixer.dist.php /elabftw
 COPY ../.stylelintrc.json /elabftw
 COPY ../builder.js /elabftw
@@ -21,11 +21,13 @@ COPY ../composer.lock /elabftw
 COPY ../cypress.config.ts /elabftw
 COPY ../node-builder.js /elabftw
 COPY ../package.json /elabftw
+COPY ../tsconfig.json /elabftw
 COPY ../yarn.lock /elabftw
 
 # install phpDocumentor
-ARG PHP_DOCUMENTOR_VERSION=v3.3.1
+# https://github.com/phpDocumentor/phpDocumentor/releases/
+ARG PHP_DOCUMENTOR_VERSION=v3.7.1
 ADD --chmod=755 https://github.com/phpDocumentor/phpDocumentor/releases/download/$PHP_DOCUMENTOR_VERSION/phpDocumentor.phar phpdoc
 
 # phpDocumentor requires ext-iconv and plantuml, graphviz for generating the svg graph
-RUN apk add --update --no-cache plantuml graphviz php81-iconv
+RUN apk add --update --no-cache plantuml graphviz php84-iconv

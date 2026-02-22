@@ -5,39 +5,359 @@
  * @license AGPL-3.0
  * @package elabftw
  */
-import { getCheckedBoxes, notif, reloadEntitiesShow, getEntity, reloadElement, permissionsToJson } from './misc';
-import { Action, Model } from './interfaces';
+import {
+  clearForm,
+  collectForm,
+  getCheckedBoxes,
+  reloadEntitiesShow,
+  TomSelect,
+} from './misc';
+import { Action, Model, LinkSubModel } from './interfaces';
 import 'bootstrap/js/src/modal.js';
-import i18next from 'i18next';
-import EntityClass from './Entity.class';
-import FavTag from './FavTag.class';
-import { Api } from './Apiv2.class';
-import $ from 'jquery';
+import i18next from './i18n';
+import { ApiC } from './api';
+import { notify } from './notify';
+import { SearchSyntaxHighlighting } from './SearchSyntaxHighlighting.class';
+import { entity } from './getEntity';
 
+const params = new URLSearchParams(document.location.search.slice(1));
+
+// a filter helper can be a select or an input (for date and extrafield), so we need a function to get its value
+function getFilterValueFromElement(element: HTMLElement): string {
+  const escapeDoubleQuotes = (string: string): string => {
+    // escape double quotes if not already escaped
+    return string.replace(/(?<!\\)"/g, '\\"');
+  };
+  const handleDate = (): string => {
+    const date = (document.getElementById('date') as HTMLInputElement).value;
+    const dateTo = (document.getElementById('dateTo') as HTMLInputElement).value;
+    const dateOperatorEl = document.getElementById('dateOperator') as HTMLSelectElement;
+    const dateOperator = dateOperatorEl.options[dateOperatorEl.selectedIndex].value;
+    if (date === '') {
+      return '';
+    }
+    if (dateTo === '') {
+      return dateOperator + date;
+    }
+    return date + '..' + dateTo;
+  };
+  const handleMetadata = (): string => {
+    const metakeyEl = document.getElementById('metakey') as HTMLSelectElement;
+    const metakey = metakeyEl.options[metakeyEl.selectedIndex].value;
+    const metavalue = (document.getElementById('metavalue') as HTMLInputElement).value;
+    if (metakey === '' || metavalue === '') {
+      return '';
+    }
+    const keyQuotes = getQuotes(metakey);
+    const valueQuotes = getQuotes(metavalue);
+    return keyQuotes + escapeDoubleQuotes(metakey) + keyQuotes + ':' + valueQuotes + escapeDoubleQuotes(metavalue) + valueQuotes;
+  };
+  if (element instanceof HTMLSelectElement) {
+    // clear action
+    if (element.options[element.selectedIndex].dataset.action === 'clear') {
+      return '';
+    }
+    if (element.id === 'dateOperator') {
+      return handleDate();
+    }
+    if (element.id === 'metakey') {
+      return handleMetadata();
+    }
+    return escapeDoubleQuotes(element.options[element.selectedIndex].value);
+  }
+  if (element instanceof HTMLInputElement) {
+    if (element.id === 'date') {
+      return handleDate();
+    }
+    if (element.id === 'dateTo') {
+      return handleDate();
+    }
+    if (element.id === 'metavalue') {
+      return handleMetadata();
+    }
+  }
+  return '😶';
+}
+
+// don't add quotes unless we need them (space or some special chars exist)
+function getQuotes(filterValue: string): string {
+  let quotes = '';
+  if ([' ', '&', '|', '!', ':', '(', ')', '\'', '"'].some(value => filterValue.includes(value))) {
+    quotes = '"';
+  }
+  return quotes;
+}
+
+function addHiddenInputToMainSearchForm(name: string, value: string): void
+{
+  const form = document.getElementById('mainSearchForm');
+  const hiddenInputId = `${name}_hiddenInput`;
+  document.getElementById(hiddenInputId)?.remove();
+  const input = document.createElement('input');
+  input.hidden = true;
+  input.name = name;
+  input.setAttribute('aria-label', name);
+  input.value = value;
+  input.id = hiddenInputId;
+  form.appendChild(input);
+}
+
+function setExpandedAndSelectedEntities(): void {
+  type ExpandedAndSelectedEntitiesState = { expanded: boolean; selectedEntities: string[]; expendedEntities: string[] };
+  const state = JSON.parse(document.getElementById('showModeContent').dataset.expandedAndSelectedEntities) as ExpandedAndSelectedEntitiesState;
+  if (state.expanded) {
+    const linkEl = document.querySelector('[data-action="expand-all-entities"]') as HTMLLinkElement;
+    linkEl.dataset.status = 'opened';
+    document.querySelectorAll('[data-action="toggle-body"]').forEach((toggleButton: HTMLButtonElement) => {
+      toggleButton.click();
+    });
+  }
+  if (state.selectedEntities.length > 0) {
+    document.getElementById('withSelected').classList.remove('d-none');
+  }
+  document.querySelectorAll('[data-action="checkbox-entity"]').forEach((item: HTMLInputElement) => {
+    if (state.selectedEntities.includes(item.dataset.id)) {
+      item.click();
+    }
+    if (!state.expanded && state.expendedEntities.includes(item.dataset.id)) {
+      (document.querySelector(`[data-action="toggle-body"][data-id="${item.dataset.id}"]`) as HTMLButtonElement).click();
+    }
+  });
+}
+
+// dynamically handle the available actions depending the state of selected entities
+function toggleActionButtonsDependingOnSelected(): void {
+  const selected = Array.from(
+    document.querySelectorAll<HTMLInputElement>('[data-action="checkbox-entity"]:checked'),
+  );
+  // collect all states from selected checkboxes
+  const selectedStates = new Set<string>();
+  selected.forEach((chk) => {
+    if (chk.dataset.state) {
+      selectedStates.add(chk.dataset.state);
+    }
+  });
+
+  document.querySelectorAll<HTMLButtonElement>('[data-action="patch-selected-entities"]').forEach(btn => {
+    const action = btn.dataset.what;
+    // enable "Restore" button if 'Deleted' (3) is among the selected entities' state
+    const allowRestore = selectedStates.size === 1 && selectedStates.has('3') && action === 'restore';
+    // enable "Unarchive" button if 'Archived' (2) is among the selected entities' state
+    const allowUnarchive = selectedStates.size === 1 && selectedStates.has('2') && action === 'unarchive';
+    // special actions to disable by default unless above conditions apply
+    const isSpecialAction = ['restore', 'unarchive'].includes(action);
+    // default enabled actions
+    const allowDefault = !selectedStates.has('2') && !selectedStates.has('3') && !isSpecialAction;
+
+    const shouldEnable = allowRestore || allowUnarchive || allowDefault;
+    const buttonLabel = btn.getAttribute('aria-label') ?? action;
+    const cannotAction = i18next.t('illegal-action');
+    // the tooltip when you hover the action, based on the enabled/disabled state
+    if (shouldEnable) {
+      btn.disabled = false;
+      btn.setAttribute('title', buttonLabel);
+    } else {
+      btn.disabled = true;
+      btn.setAttribute('title', cannotAction);
+    }
+  });
+}
+
+// get query param value as number
+function getParamNum(param: string): number {
+  const params = new URLSearchParams(document.location.search);
+  let val = params.get(param);
+  if (!val) {
+    val = '0';
+  }
+  return parseInt(val, 10);
+}
+
+// the "load more" button triggers a reloading of div#showModeContent
+// so we keep track of the expanded and selected entities
+function getExpandedAndSelectedEntities(): void {
+  const expanded = (document.querySelector('[data-action="expand-all-entities"]') as HTMLLinkElement).dataset.status === 'opened';
+  const expendedEntities: string[] = [];
+  const selectedEntities: string[] = [];
+  document.querySelectorAll('[data-action="checkbox-entity"]').forEach((item: HTMLInputElement) => {
+    if (item.checked) {
+      selectedEntities.push(item.dataset.id);
+    }
+    if (!document.getElementById(item.dataset.randomid).hidden) {
+      expendedEntities.push(item.dataset.id);
+    }
+  });
+  document.getElementById('showModeContent').dataset.expandedAndSelectedEntities = JSON.stringify({expanded, selectedEntities, expendedEntities});
+}
+
+type TomSelectOptionLike = Record<string, unknown> & {
+  $option?: Element | null;
+};
+
+type ToggleableTomSelect = TomSelect & {
+  [key: string]: unknown;
+};
+
+type TomSelectWithAllOptions = ToggleableTomSelect & {
+  _allOptions?: TomSelectOptionLike[];
+};
+
+type AnyTS = TomSelectWithAllOptions & {
+  _showArchived?: boolean;
+};
+const bound = new WeakSet<Element>();
+
+// DOM
 document.addEventListener('DOMContentLoaded', () => {
   if (!document.getElementById('info')) {
     return;
   }
   const about = document.getElementById('info').dataset;
-  // only run in show mode or on search page (which is kinda show mode too)
-  const pages = ['show', 'search'];
-  if (!pages.includes(about.page)) {
+  // only run in show mode
+  if (about.page !== 'show') {
     return;
   }
 
-  const entity = getEntity();
-  const EntityC = new EntityClass(entity.type);
-  const FavTagC = new FavTag();
-  const ApiC = new Api();
+  // Preserve filters from navbar dropdown (e.g., category, scope, bookable) when performing a search. #6284
+  ['category', 'scope', 'bookable'].forEach(param => {
+    if (params.has(param)) {
+      addHiddenInputToMainSearchForm(param, params.get(param));
+    }
+  });
 
-  // THE CHECKBOXES
-  const nothingSelectedError = {
-    'msg': i18next.t('nothing-selected'),
-    'res': false,
-  };
+  // SEARCH RELATED CODE
+  const searchInput = document.getElementById('extendedArea') as HTMLInputElement;
+  SearchSyntaxHighlighting.init(searchInput);
+
+  // TomSelect for extra fields & owner search select
+  if (document.getElementById('metakey')) {
+    new TomSelect('#metakey', {
+      maxOptions: 512,
+      plugins: [
+        'dropdown_input',
+        'remove_button',
+      ],
+    });
+  }
+  if (document.getElementById('filterOwner')) {
+    const tsFilterOwner = new TomSelect('#filterOwner', {
+      maxOptions: 512,
+      plugins: {
+        dropdown_header: {
+          title: 'Users',
+          html: buildDropdownToggleHeaderHtml(i18next.t('users'), 'ts-toggle-archived', i18next.t('show-archived')),
+        },
+        dropdown_input: {},
+        remove_button: {},
+      },
+      onInitialize(this: AnyTS) {
+        this._allOptions = Object.values(this.options) as TomSelectOptionLike[];
+        this._showArchived = false;
+        applyToggleFilter(this, '_showArchived', isArchivedOption);
+      },
+      render: {
+        option(data: AnyTS, escape: (s: string) => string) {
+          const optEl = data.$option as HTMLOptionElement | undefined;
+          const isArchived = optEl?.getAttribute('data-is-archived') === '1';
+          const icon = isArchived ? '<i class=\'fas fa-box-archive mr-1\'></i>' : '';
+          return `<div>${icon}${escape(data.text ?? data.name ?? '')}</div>`;
+        },
+
+        // item is the selected option
+        item(data: AnyTS, escape: (s: string) => string) {
+          const optEl = data.$option as HTMLOptionElement | undefined;
+          const isArchived = optEl?.getAttribute('data-is-archived') === '1';
+          const icon = isArchived ? '<i class=\'fas fa-box-archive mr-1\'></i>' : '';
+          return `<div>${icon}${escape(data.text ?? data.name ?? '')}</div>`;
+        },
+      },
+    }) as AnyTS;
+
+    tsFilterOwner.on('dropdown_open', () => {
+      bindDropdownToggle(tsFilterOwner, '.ts-toggle-archived', '_showArchived', () => {
+        applyToggleFilter(tsFilterOwner, '_showArchived', isArchivedOption);
+        tsFilterOwner.open();
+      });
+    });
+  }
+
+
+  // add a change event listener to all elements that helps constructing the query string
+  document.querySelectorAll('.filterHelper').forEach(el => {
+    el.addEventListener('change', event => {
+      const elem = event.currentTarget as HTMLElement;
+      const curVal = (document.getElementById('extendedArea') as HTMLInputElement).value;
+      const hasInput = curVal.length != 0;
+      const hasSpace = curVal.endsWith(' ');
+      const addSpace = hasInput ? (hasSpace ? '' : ' ') : '';
+      let filterName = elem.dataset.filter ? elem.dataset.filter : (elem as HTMLInputElement).name;
+
+      // look if the filter key already exists in the search input
+      // paste the regex on regex101.com to understand it
+      const baseRegex = '(?:(?:"((?:\\\\"|(?:(?!")).)+)")|(?:\'((?:\\\\\'|(?:(?!\')).)+)\')|([^\\s:\'"()&|!]+))';
+      const operatorRegex = '(?:[<>]=?|!?=)?';
+      let valueRegex = baseRegex;
+
+      if (filterName === 'date') {
+        // date can use operator
+        valueRegex = operatorRegex + baseRegex;
+      }
+      if (filterName === 'extrafield') {
+        // extrafield has key and value so we need the regex above twice
+        valueRegex = baseRegex + ':' + baseRegex;
+      }
+      const regex = new RegExp(filterName + ':' + valueRegex + '\\s?');
+      const found = curVal.match(regex);
+      // default value is clearing everything
+      let filter = '';
+      let filterValue = getFilterValueFromElement(elem as HTMLElement);
+      let quotes = getQuotes(filterValue);
+      // but if we have a correct value, we add the filter
+      if (filterValue !== '') {
+        if (filterName === 'date') {
+          quotes = '';
+        }
+
+        if (filterName === '(?:author|group)') {
+          filterName = filterValue.split(':')[0];
+          filterValue = filterValue.substring(filterName.length + 1);
+        }
+
+        filter = filterName + ':' + quotes + filterValue + quotes;
+
+        if (filterName === 'extrafield') {
+          filter = `${filterName}:${filterValue}`;
+        }
+      }
+
+      if (found) {
+        searchInput.value = curVal.replace(regex, filter + (filter === '' ? '' : ' '));
+      } else {
+        searchInput.value = searchInput.value + addSpace + filter;
+      }
+      SearchSyntaxHighlighting.update(searchInput.value);
+    });
+  });
+  // FILTERS HANDLER FOR THE SHOW PAGE
+  document.querySelectorAll('.filterAuto').forEach(el => {
+    el.addEventListener('change', event => {
+      // prevent this listener to be active when toggling archived users
+      if ((event.target as HTMLElement).classList.contains('ts-toggle-archived')) return;
+      const url = new URL(window.location.href);
+      const elem = event.target as HTMLSelectElement;
+      const elemValue = elem.options[elem.selectedIndex].value;
+      url.searchParams.set(elem.name, elemValue);
+      // also add it to the main input form
+      addHiddenInputToMainSearchForm(elem.name, elemValue);
+
+      window.history.replaceState({}, '', url.toString());
+      reloadEntitiesShow();
+    });
+  });
+  // END SEARCH RELATED CODE
 
   // background color for selected entities
-  const bgColor = '#c4f9ff';
+  const bgColor = 'var(--lightblue)';
 
   if (document.getElementById('favtagsPanel')) {
     document.getElementById('favtagsPanel').addEventListener('keyup', event => {
@@ -45,26 +365,16 @@ document.addEventListener('DOMContentLoaded', () => {
       const query = el.value;
       if (el.matches('[data-action="favtags-search"]')) {
         // find all links that are endpoints
-        document.querySelectorAll('[data-action="add-tag-filter"]').forEach(el => {
+        document.querySelectorAll('[data-action="add-tag-filter"]').forEach((el: HTMLElement) => {
           // begin by showing all so they don't stay hidden
           el.removeAttribute('hidden');
           // now simply hide the ones that don't match the query
-          if (!(el as HTMLElement).innerText.toLowerCase().includes(query)) {
-            el.setAttribute('hidden', '');
+          if (!el.innerText.toLowerCase().includes(query)) {
+            el.hidden = true;
           }
         });
       }
     });
-  }
-
-  // get query param value as number
-  function getParamNum(param: string): number {
-    const params = new URLSearchParams(document.location.search);
-    let val = params.get(param);
-    if (!val) {
-      val = '0';
-    }
-    return parseInt(val, 10);
   }
 
   /////////////////////////////////////////
@@ -78,99 +388,15 @@ document.addEventListener('DOMContentLoaded', () => {
     if (el.matches('[data-action="export-selected-entities"]')) {
       const checked = getCheckedBoxes();
       if (checked.length === 0) {
-        notif(nothingSelectedError);
+        notify.error('nothing-selected');
         return;
       }
       const format = el.value;
       // reset selection so button can be used again with same format
       el.selectedIndex = 0;
-      window.location.href = `make.php?format=${format}&type=${about.type}&id=${checked.map(value => value.id).join('+')}`;
-
-    // UPDATE CATEGORY OR STATUS
-    } else if (el.matches('[data-action="update-catstat-selected-entities"]')) {
-      const ajaxs = [];
-      // get the item id of all checked boxes
-      const checked = getCheckedBoxes();
-      if (checked.length === 0) {
-        notif(nothingSelectedError);
-        return;
-      }
-      // loop on it and update the status/item type
-      checked.forEach(chk => {
-        const params = {};
-        params[el.dataset.target] = el.value;
-        ajaxs.push(ApiC.patch(`${about.type}/${chk.id}`, params));
-      });
-      // reload the page once it's done
-      // a simple reload would not work here
-      // we need to use when/then
-      $.when.apply(null, ajaxs).then(function() {
-        reloadEntitiesShow();
-      });
-      notif({'msg': 'Saved', 'res': true});
-
-    // UPDATE VISIBILITY
-    } else if (el.matches('[data-action="update-visibility-selected-entities"]')) {
-      const ajaxs = [];
-      // get the item id of all checked boxes
-      const checked = getCheckedBoxes();
-      if (checked.length === 0) {
-        notif(nothingSelectedError);
-        return;
-      }
-      // loop on it and update the status/item type
-      checked.forEach(chk => {
-        ajaxs.push(ApiC.patch(`${about.type}/${chk.id}`, {'canread': permissionsToJson(parseInt(el.value, 10), [])}));
-      });
-      // reload the page once it's done
-      // a simple reload would not work here
-      // we need to use when/then
-      $.when.apply(null, ajaxs).then(function() {
-        reloadEntitiesShow();
-      });
-      notif({'msg': 'Saved', 'res': true});
+      window.location.href = `make.php?format=${format}&type=${entity.type}&id=${checked.map(value => value.id).join('+')}`;
     }
   });
-
-  // the "load more" button triggers a reloading of div#showModeContent
-  // so we keep track of the expanded and selected entities
-  function getExpandedAndSelectedEntities(): void {
-    const expanded = (document.querySelector('[data-action="expand-all-entities"]') as HTMLLinkElement).dataset.status === 'opened';
-    const expendedEntities: string[] = [];
-    const selectedEntities: string[] = [];
-    document.querySelectorAll('[data-action="checkbox-entity"]').forEach((item: HTMLInputElement) => {
-      if (item.checked) {
-        selectedEntities.push(item.dataset.id);
-      }
-      if (!document.getElementById(item.dataset.randomid).hidden) {
-        expendedEntities.push(item.dataset.id);
-      }
-    });
-    document.getElementById('showModeContent').dataset.expandedAndSelectedEntities = JSON.stringify({expanded, selectedEntities, expendedEntities});
-  }
-
-  function setExpandedAndSelectedEntities(): void {
-    const state = JSON.parse(document.getElementById('showModeContent').dataset.expandedAndSelectedEntities);
-    if (state.expanded) {
-      const linkEl = document.querySelector('[data-action="expand-all-entities"]') as HTMLLinkElement;
-      linkEl.dataset.status = 'opened';
-      linkEl.textContent = linkEl.dataset.collapse;
-      document.querySelectorAll('[data-action="toggle-body"]').forEach((toggleButton: HTMLButtonElement) => {
-        toggleButton.click();
-      });
-    }
-    if (state.selectedEntities.length > 0) {
-      document.getElementById('withSelected').classList.remove('d-none');
-    }
-    document.querySelectorAll('[data-action="checkbox-entity"]').forEach((item: HTMLInputElement) => {
-      if (state.selectedEntities.includes(item.dataset.id)) {
-        item.click();
-      }
-      if (!state.expanded && state.expendedEntities.includes(item.dataset.id)) {
-        (document.querySelector(`[data-action="toggle-body"][data-id="${item.dataset.id}"]`) as HTMLButtonElement).click();
-      }
-    });
-  }
 
   /////////////////////////
   // MAIN CLICK LISTENER //
@@ -189,7 +415,7 @@ document.addEventListener('DOMContentLoaded', () => {
       // we want to know if the newly applied limit actually brought new items
       // because if not, we disable the button
       // so simply count them
-      const previousNumber = document.querySelectorAll('.item').length;
+      const previousNumber = document.querySelectorAll('.entity').length;
       // this will be 0 if the button has not been clicked yet
       const queryLimit = getParamNum('limit');
       const usualLimit = parseInt(about.limit, 10);
@@ -204,25 +430,71 @@ document.addEventListener('DOMContentLoaded', () => {
         // expand and select what was expanded and selected
         setExpandedAndSelectedEntities();
         // remove Load more button if no new entries appeared
-        const newNumber = document.querySelectorAll('.item').length;
+        const newNumber = document.querySelectorAll('.entity').length;
         if (previousNumber === newNumber) {
           document.getElementById('loadMoreBtn').remove();
         }
       });
 
-    // TOGGLE FAVTAGS PANEL
-    } else if (el.matches('[data-action="toggle-favtags"]')) {
-      FavTagC.toggle();
+    // SAVE MULTI CHANGES
+    } else if (el.matches('[data-action="save-multi-changes"]')) {
+
+      // prevent form submission
+      event.preventDefault();
+
+      // get the item id of all checked boxes
+      const checked = getCheckedBoxes();
+      if (checked.length === 0) {
+        notify.error('nothing-selected');
+        return;
+      }
+      // display a warning with the number of impacted entries
+      if (!confirm(i18next.t('multi-changes-confirm', { num: checked.length }))) {
+        return;
+      }
+      (el as HTMLButtonElement).disabled = true;
+      ApiC.notifOnSaved = false;
+      const ajaxs: Promise<unknown>[] = [];
+      const form = document.getElementById('multiChangesForm');
+      const params = collectForm(form);
+      clearForm(form);
+      checked.forEach(chk => {
+        const paramsCopy = Object.assign({}, params);
+        // they do not have all the same endpoint: handle tags and links the generic patch method
+        for (const key in paramsCopy) {
+          if (key === 'tags') {
+            ajaxs.push(ApiC.post(`${entity.type}/${chk.id}/${Model.Tag}`, {tag: paramsCopy[key]}));
+            delete paramsCopy[key];
+          } else if (Object.values(LinkSubModel).includes(key as LinkSubModel)) {
+            ajaxs.push(ApiC.post(`${entity.type}/${chk.id}/${key}/${parseInt(paramsCopy[key], 10)}`));
+            delete paramsCopy[key];
+          }
+        }
+        // patch whatever is left
+        if (Object.entries(paramsCopy).length > 0) {
+          ajaxs.push(ApiC.patch(`${entity.type}/${chk.id}`, paramsCopy));
+        }
+      });
+      // reload the page once it's done
+      Promise.all(ajaxs).then(() => {
+        notify.success();
+        ApiC.notifOnSaved = true;
+        reloadEntitiesShow();
+      }).catch(() => (el as HTMLButtonElement).disabled = false);
+
+    } else if (el.matches('[data-action="clear-form"]')) {
+      clearForm(document.getElementById(el.dataset.target));
 
     // TOGGLE DISPLAY
     } else if (el.matches('[data-action="toggle-items-layout"]')) {
       ApiC.notifOnSaved = false;
-      ApiC.getJson(`${Model.User}/me`).then(json => {
+      ApiC.getJson(`${Model.User}/me`).then((json: { display_mode?: string }) => {
         let target = 'it';
         if (json['display_mode'] === 'it') {
           target = 'tb';
         }
-        ApiC.patch(`${Model.User}/me`, {'display_mode': target}).then(() => {
+        ApiC.patch(`${Model.User}/me`, { display_mode: target }).then(() => {
+          document.getElementById('realContainer')?.classList.toggle('max-width-70', target === 'it');
           reloadEntitiesShow();
         });
       });
@@ -239,23 +511,6 @@ document.addEventListener('DOMContentLoaded', () => {
       el.classList.add('selected');
       reloadEntitiesShow(el.dataset.tag);
 
-    // clear the filter input for favtags
-    } else if (el.matches('[data-action="clear-favtags-search"]')) {
-      const searchInput = el.parentElement.parentElement.querySelector('input');
-      searchInput.value = '';
-      searchInput.focus();
-      document.querySelectorAll('[data-action="add-tag-filter"]').forEach(el => {
-        el.removeAttribute('hidden');
-      });
-
-    // TOGGLE PIN
-    } else if (el.matches('[data-action="toggle-pin"]')) {
-      ApiC.patch(`${entity.type}/${parseInt(el.dataset.id, 10)}`, {'action': Action.Pin}).then(() => el.closest('.item').remove());
-
-    // remove a favtag
-    } else if (el.matches('[data-action="destroy-favtags"]')) {
-      FavTagC.destroy(parseInt(el.dataset.id, 10)).then(() => reloadElement('favtagsTagsDiv'));
-
     // SORT COLUMN IN TABULAR MODE
     } else if (el.matches('[data-action="reorder-entities"]')) {
       const params = new URLSearchParams(document.location.search);
@@ -271,29 +526,42 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // CHECK AN ENTITY BOX
     } else if (el.matches('[data-action="checkbox-entity"]')) {
-      ['advancedSelectOptions', 'withSelected'].forEach(id => {
+      ['withSelected'].forEach(id => {
         const el = document.getElementById(id);
         const scroll = el.classList.contains('d-none');
         el.classList.remove('d-none');
-        if (id === 'withSelected' && scroll && el.getBoundingClientRect().bottom > 0) {
+        if (scroll && el.getBoundingClientRect().bottom > 0) {
           window.scrollBy({top: el.offsetHeight, behavior: 'instant'});
         }
       });
+      toggleActionButtonsDependingOnSelected();
       if ((el as HTMLInputElement).checked) {
-        (el.closest('.item') as HTMLElement).style.backgroundColor = bgColor;
+        (el.closest('.entity') as HTMLElement).style.backgroundColor = bgColor;
       } else {
-        (el.closest('.item') as HTMLElement).style.backgroundColor = '';
+        (el.closest('.entity') as HTMLElement).style.backgroundColor = '';
       }
+      // show invert select if any checkbox is selected
+      const anyChecked = document.querySelectorAll('[data-action="checkbox-entity"]:checked').length > 0;
+      const invertSelections = document.querySelector('a[data-action="invert-entities-selection"]') as HTMLAnchorElement;
+      if (anyChecked) {
+        invertSelections?.removeAttribute('hidden');
+      } else {
+        invertSelections?.setAttribute('hidden', 'hidden');
+        // Remove withSelected actions if there are no more checked checkboxes
+        document.getElementById('withSelected')?.classList.add('d-none');
+      }
+
+    // RESTORE ENTITY IN SHOW MODE
+    } else if (el.matches('[data-action="restore-entity-showmode"]')) {
+      ApiC.patch(`${el.dataset.endpoint}/${el.dataset.id}`, { action: Action.Restore }).then(() => reloadEntitiesShow());
 
     // EXPAND ALL
     } else if (el.matches('[data-action="expand-all-entities"]')) {
       event.preventDefault();
       if (el.dataset.status === 'closed') {
         el.dataset.status = 'opened';
-        el.innerText = el.dataset.collapse;
       } else {
         el.dataset.status = 'closed';
-        el.innerText = el.dataset.expand;
       }
       const status = el.dataset.status;
       document.querySelectorAll('[data-action="toggle-body"]').forEach((toggleButton: HTMLElement) => {
@@ -305,104 +573,292 @@ document.addEventListener('DOMContentLoaded', () => {
         }
         toggleButton.click();
       });
+      const icon = el.querySelector('i');
+      icon.classList.toggle('fa-maximize');
+      icon.classList.toggle('fa-minimize');
 
     // SELECT ALL CHECKBOXES
-    } else if (el.matches('[data-action="select-all-entities"]')) {
+    } else if (el.matches('[data-action="toggle-select-all-entities"]')) {
       event.preventDefault();
-      // check all boxes and set background color
-      document.querySelectorAll('.item input[type=checkbox]').forEach(box => {
-        (box as HTMLInputElement).checked = true;
-        (box.closest('.item') as HTMLElement).style.backgroundColor = bgColor;
-      });
-      // show advanced options and withSelected menu
-      ['advancedSelectOptions', 'withSelected'].forEach(id => {
-        document.getElementById(id).classList.remove('d-none');
-      });
-
-    // UNSELECT ALL CHECKBOXES
-    } else if (el.matches('[data-action="unselect-all-entities"]')) {
-      event.preventDefault();
-      document.querySelectorAll('.item input[type=checkbox]').forEach(box => {
-        (box as HTMLInputElement).checked = false;
-        (box.closest('.item') as HTMLElement).style.backgroundColor = '';
-      });
-      // hide menu
-      ['advancedSelectOptions', 'withSelected'].forEach(id => {
-        document.getElementById(id).classList.add('d-none');
-      });
+      if (el.dataset.target === 'select') {
+        // check all boxes and set background color
+        document.querySelectorAll('.entity input[type=checkbox]')?.forEach(box => {
+          (box as HTMLInputElement).checked = true;
+          (box.closest('.entity') as HTMLElement).style.backgroundColor = bgColor;
+        });
+        document.getElementById('withSelected')?.classList.remove('d-none');
+        el.dataset.target = 'unselect';
+      } else {
+        document.querySelectorAll('.entity input[type=checkbox]')?.forEach(box => {
+          (box as HTMLInputElement).checked = false;
+          (box.closest('.entity') as HTMLElement).style.backgroundColor = '';
+        });
+        el.dataset.target = 'select';
+        document.getElementById('withSelected')?.classList.add('d-none');
+      }
+      const icon = el.querySelector('i');
+      icon.classList.toggle('fa-square');
+      icon.classList.toggle('fa-square-check');
+      el.nextElementSibling.removeAttribute('hidden');
 
     // INVERT SELECTION
     } else if (el.matches('[data-action="invert-entities-selection"]')) {
       event.preventDefault();
-      document.querySelectorAll('.item input[type=checkbox]').forEach(box => {
+      document.querySelectorAll('.entity input[type=checkbox]').forEach(box => {
         (box as HTMLInputElement).checked = !(box as HTMLInputElement).checked;
         let newBgColor = '';
         if ((box as HTMLInputElement).checked) {
           newBgColor = bgColor;
         }
-        (box.closest('.item') as HTMLElement).style.backgroundColor = newBgColor;
+        (box.closest('.entity') as HTMLElement).style.backgroundColor = newBgColor;
       });
+      // Remove withSelected actions if there are no more checked checkboxes
+      const anyChecked = document.querySelectorAll('[data-action="checkbox-entity"]:checked').length > 0;
+      const withSelected = document.getElementById('withSelected') as HTMLDivElement;
+      if (anyChecked) {
+        withSelected.classList.remove('d-none');
+      } else {
+        withSelected.classList.add('d-none');
+      }
 
-
-    // THE LOCK BUTTON FOR CHECKED BOXES
-    } else if (el.matches('[data-action="lock-selected-entities"]')) {
+    // PATCH ACTIONS FOR CHECKED BOXES : lock, unlock, timestamp, archive
+    } else if (el.matches('[data-action="patch-selected-entities"]')) {
       // get the item id of all checked boxes
       const checked = getCheckedBoxes();
       if (checked.length === 0) {
-        notif(nothingSelectedError);
+        notify.error('nothing-selected');
         return;
       }
-
-      // loop over it and lock entities
-      const results = [];
-      checked.forEach(chk => {
-        results.push(EntityC.lock(chk.id));
-      });
-
+      const action = <Action>el.dataset.what;
+      // special case: DELETE request for confirmation & deletes div
+      if (action === Action.Destroy) {
+        if (!confirm(i18next.t('generic-delete-warning'))) {
+          return;
+        }
+        // perform deletes
+        checked.forEach(chk => {
+          ApiC.delete(`${entity.type}/${chk.id}`).then(() => {
+            // use curly braces to avoid implicit return
+            document.getElementById(`parent_${chk.randomid}`)?.remove();
+          });
+        });
+        return;
+      }
+      // handle all other PATCH with selected action
+      const results = checked.map(chk =>
+        ApiC.patch(`${entity.type}/${chk.id}`, {action}),
+      );
+      ApiC.notifOnSaved = false;
       Promise.all(results).then(() => {
+        notify.success();
         reloadEntitiesShow();
+        ApiC.notifOnSaved = true;
       });
-
-
-    // THE TIMESTAMP BUTTON FOR CHECKED BOXES
-    } else if (el.matches('[data-action="timestamp-selected-entities"]')) {
-      const checked = getCheckedBoxes();
-      if (checked.length === 0) {
-        notif(nothingSelectedError);
-        return;
-      }
-      // loop on it and timestamp it
-      checked.forEach(chk => {
-        EntityC.timestamp(chk.id).then(() => reloadEntitiesShow());
-      });
-
-    // THE DELETE BUTTON FOR CHECKED BOXES
-    } else if (el.matches('[data-action="destroy-selected-entities"]')) {
-      // get the item id of all checked boxes
-      const checked = getCheckedBoxes();
-      if (checked.length === 0) {
-        notif(nothingSelectedError);
-        return;
-      }
-      // ask for confirmation
-      if (!confirm(i18next.t('generic-delete-warning'))) {
-        return;
-      }
-      // loop on it and delete stuff (use curly braces to avoid implicit return)
-      checked.forEach(chk => {EntityC.destroy(chk.id).then(() => document.getElementById(`parent_${chk.randomid}`).remove());});
     }
   });
 
-  // we don't want the favtags opener on search page
-  // when a search is done, about.page will be show
-  // so check for the type param in url that will be present on search page
-  const params = new URLSearchParams(document.location.search.slice(1));
-  if (!params.get('type')) {
-    document.getElementById('sidepanel-buttons').removeAttribute('hidden');
+  type TeamScopedTomSelect = TomSelectWithAllOptions & {
+    _showAll?: boolean;
+  };
+
+  function buildDropdownToggleHeaderHtml(
+    title: string,
+    checkboxClass: string,
+    label: string,
+  ) {
+    return (data: { headerClass: string; titleRowClass: string }) => `
+      <div class="${data.headerClass}">
+        <div class="${data.titleRowClass}" style="display:flex; align-items:center; gap:12px;">
+          <div>${title}</div>
+          <label style="margin-left:auto; display:flex; align-items:center; gap:6px; font-weight:normal;">
+            <input type="checkbox" class="${checkboxClass}">
+            ${label}
+          </label>
+        </div>
+      </div>
+    `;
   }
 
-  // FAVTAGS PANEL
-  if (localStorage.getItem('isfavtagsOpen') === '1') {
-    FavTagC.toggle();
+  function getOptionFlag(opt: TomSelectOptionLike | undefined | null, attr: string): boolean {
+    const el = opt?.$option as HTMLOptionElement | undefined;
+    const raw = el?.getAttribute(attr) ?? '0';
+    return raw === '1';
   }
+
+  function isCurrentTeamOption(opt: TomSelectOptionLike | undefined | null): boolean {
+    return getOptionFlag(opt, 'data-current-team');
+  }
+
+  function isArchivedOption(opt: TomSelectOptionLike | undefined | null): boolean {
+    return getOptionFlag(opt, 'data-is-archived');
+  }
+
+  function applyToggleFilter(
+    control: TomSelectWithAllOptions,
+    flagKey: string,
+    hideWhenFlagFalse: (opt: TomSelectOptionLike) => boolean,
+  ) {
+    const selected = new Set(control.items.map(String));
+    const flagOn = !!control[flagKey];
+
+    if (flagOn) {
+      for (const opt of control._allOptions ?? []) control.addOption(opt);
+    } else {
+      for (const opt of control._allOptions ?? []) {
+        const id = String(opt[control.settings.valueField]);
+        if (hideWhenFlagFalse(opt) && !selected.has(id)) {
+          control.removeOption(id);
+        }
+      }
+    }
+
+    control.refreshOptions(false);
+  }
+
+  function applyTeamFilter(control: TeamScopedTomSelect) {
+    applyToggleFilter(control, '_showAll', (opt) => !isCurrentTeamOption(opt));
+  }
+
+  function syncMultiSelectParam(param: string, value: string | string[] | null | undefined) {
+    const url = new URL(window.location.href);
+
+    // Tom Select gives an array for multi-select; normalize just in case
+    const selected = Array.isArray(value) ? value : value ? [value] : [];
+
+    if (selected.length === 0) {
+      url.searchParams.delete(param);
+      addHiddenInputToMainSearchForm(param, '');
+    } else {
+      const joined = selected.join(',');
+      url.searchParams.set(param, joined); // param=1,2,5
+      addHiddenInputToMainSearchForm(param, joined);
+    }
+
+    window.history.replaceState({}, '', url.toString());
+  }
+
+  function bindDropdownToggle(
+    control: ToggleableTomSelect,
+    selector: string,
+    flagKey: string,
+    onToggle: (checked: boolean) => void,
+  ) {
+    const cb = control.dropdown?.querySelector(selector) as HTMLInputElement | null;
+    if (!cb) return;
+
+    // Always sync UI to current state when dropdown opens
+    cb.checked = !!control[flagKey];
+
+    // Bind once per checkbox element
+    if (bound.has(cb)) return;
+    bound.add(cb);
+
+    cb.addEventListener('change', (ev) => {
+      const checked = (ev.currentTarget as HTMLInputElement).checked;
+      control[flagKey] = checked;
+      onToggle(checked);
+    });
+  }
+
+  function bindShowAllToggle(control: TeamScopedTomSelect) {
+    bindDropdownToggle(control, '.ts-toggle-show-all', '_showAll', (checked) => {
+      const url = new URL(window.location.href);
+      if (checked) url.searchParams.set('scope', '3');
+      else url.searchParams.delete('scope');
+      window.history.replaceState({}, '', url.toString());
+
+      applyTeamFilter(control);
+      control.open(); // keep it open after filtering
+      reloadEntitiesShow();
+    });
+  }
+
+  function initTeamScopedFilter(cfg: {
+    selectId: string;         // e.g. "categoryFilter"
+    placeholderId: string;    // e.g. "categoryFilterPlaceholder"
+    title: string;            // e.g. "Categories"
+    param: string;            // e.g. "category"
+  }) {
+    const el = document.getElementById(cfg.selectId);
+    if (!el) return;
+
+    const control = new TomSelect(`#${cfg.selectId}`, {
+      maxOptions: 512,
+      plugins: {
+        dropdown_header: {
+          title: cfg.title,
+          html: buildDropdownToggleHeaderHtml(cfg.title, 'ts-toggle-show-all', i18next.t('show-all')),
+        },
+        dropdown_input: {},
+        remove_button: {},
+      },
+
+      onInitialize(this: TeamScopedTomSelect) {
+        document.getElementById(cfg.placeholderId)?.remove();
+
+        this._allOptions = Object.values(this.options) as TomSelectOptionLike[];
+        this._showAll = false;
+
+        applyTeamFilter(this);
+      },
+
+      onChange(value: string | string[] | null | undefined) {
+        syncMultiSelectParam(cfg.param, value);
+        reloadEntitiesShow();
+      },
+    }) as TeamScopedTomSelect;
+
+    control.on('dropdown_open', () => bindShowAllToggle(control));
+
+    return control;
+  }
+
+  // category tomSelect
+  initTeamScopedFilter({
+    selectId: 'categoryFilter',
+    placeholderId: 'categoryFilterPlaceholder',
+    title: i18next.t('categories'),
+    param: 'category',
+  });
+
+  // status tomSelect
+  initTeamScopedFilter({
+    selectId: 'statusFilter',
+    placeholderId: 'statusFilterPlaceholder',
+    title: i18next.t('status'),
+    param: 'status',
+  });
+
+  new TomSelect('#tagFilter', {
+    onInitialize: () => {
+      // remove the placeholder input once the select is ready
+      document.getElementById('tagFilterPlaceholder').remove();
+    },
+    onChange: (value: unknown) => {
+      const url = new URL(window.location.href);
+      url.searchParams.delete('tags[]');
+      (value as string[]).forEach(tag => {
+        params.append('tags[]', tag);
+        url.searchParams.append('tags[]', tag);
+      });
+      if ((value as string[]).length === 0) {
+        url.searchParams.delete('tags[]');
+      }
+      addHiddenInputToMainSearchForm('tags[]', (value as string[]).toString());
+
+      window.history.replaceState({}, '', url.toString());
+      reloadEntitiesShow();
+    },
+    onItemAdd() {
+      this.setTextboxValue('');
+      // refresh the dropdown so it shows suggestions for new input
+      this.refreshOptions();
+    },
+    plugins: {
+      clear_button: {},
+      dropdown_input: {},
+      no_active_items: {},
+      remove_button: {},
+    },
+  });
 });

@@ -1,4 +1,6 @@
-<?php declare(strict_types=1);
+<?php
+
+declare(strict_types=1);
 /**
  * @package   Elabftw\Elabftw
  * @author    Nicolas CARPi <nico-git@deltablot.email>
@@ -7,7 +9,7 @@
  * @see       https://www.elabftw.net Official website
  */
 
-use \Codeception\Util\HttpCode;
+use Codeception\Util\HttpCode;
 
 class BadRequests2Cest
 {
@@ -17,7 +19,7 @@ class BadRequests2Cest
         $I->wantTo('Send a request with a wrong key');
         $I->haveHttpHeader('Authorization', 'wrong_key');
         $I->sendGET('/experiments/1');
-        $I->seeResponseCodeIs(HttpCode::BAD_REQUEST); // 400
+        $I->seeResponseCodeIs(HttpCode::UNAUTHORIZED); // 401
     }
 
     public function badMethodTest(Apiv2Tester $I)

@@ -1,4 +1,6 @@
-<?php declare(strict_types=1);
+<?php
+
+declare(strict_types=1);
 /**
  * @author Nicolas CARPi <nico-git@deltablot.email>
  * @copyright 2012 Nicolas CARPi
@@ -9,41 +11,43 @@
 
 namespace Elabftw\Elabftw;
 
-use function dirname;
-
 use Elabftw\AuditEvent\PasswordResetRequested;
+use Elabftw\Enums\Messages;
 use Elabftw\Exceptions\DatabaseErrorException;
-use Elabftw\Exceptions\FilesystemErrorException;
 use Elabftw\Exceptions\IllegalActionException;
 use Elabftw\Exceptions\ImproperActionException;
-use Elabftw\Exceptions\QuantumException;
 use Elabftw\Exceptions\ResourceNotFoundException;
 use Elabftw\Models\AuditLogs;
-use Elabftw\Models\Config;
-use Elabftw\Models\ExistingUser;
+use Elabftw\Models\Users\ExistingUser;
 use Elabftw\Services\Email;
 use Elabftw\Services\ResetPasswordKey;
 use Exception;
-use function nl2br;
-use function random_int;
-use function sleep;
 use Symfony\Component\HttpFoundation\RedirectResponse;
 use Symfony\Component\Mailer\Mailer;
 use Symfony\Component\Mailer\Transport;
 use Symfony\Component\Mime\Address;
 use Symfony\Component\Mime\Email as Memail;
+
+use function dirname;
+use function nl2br;
+use function random_int;
+use function sleep;
 use function time;
 
 require_once dirname(__DIR__) . '/init.inc.php';
 
 $Response = new RedirectResponse('/login.php');
-$ResetPasswordKey = new ResetPasswordKey(time(), Config::fromEnv('SECRET_KEY'));
+$ResetPasswordKey = new ResetPasswordKey(time(), Env::asString('SECRET_KEY'));
 
 try {
+    if ($App->Config->configArr['local_auth_enabled'] === '0') {
+        throw new ImproperActionException('This instance has disabled local authentication method, so passwords cannot be reset.');
+    }
     $Email = new Email(
         new Mailer(Transport::fromDsn($App->Config->getDsn())),
         $App->Log,
         $App->Config->configArr['mail_from'],
+        $App->demoMode,
     );
 
     // PART 1: we receive the email from the login page/forgot password form
@@ -62,7 +66,8 @@ try {
         } catch (ResourceNotFoundException $e) {
             // make the response slow to emulate an email being sent if there was an account associated
             sleep(random_int(1, 3));
-            throw new QuantumException(_('If the account exists, an email has been sent.'));
+            $App->Session->getFlashBag()->add('ok', _('If the account exists, an email has been sent.'));
+            return;
         }
 
         // If user is not validated, the password reset form won't work
@@ -75,7 +80,7 @@ try {
         $key = $ResetPasswordKey->generate($Users->userData['email']);
 
         // build the reset link
-        $resetLink = Config::fromEnv('SITE_URL') . '/change-pass.php?key=' . $key;
+        $resetLink = Env::asUrl('SITE_URL') . '/change-pass.php?key=' . $key;
         $htmlResetLink = '<a href="' . $resetLink . '">' . _('Reset password') . '</a>';
 
         $rawBody = _('Hi. Someone (probably you) requested a new password on eLabFTW.%s Please follow this link to reset your password: %s %sThis link is only valid for %s minutes.');
@@ -96,7 +101,8 @@ try {
         AuditLogs::create(new PasswordResetRequested($email));
         // show the same message as if the email didn't exist in the db
         // this is done to prevent information disclosure
-        throw new QuantumException(_('If the account exists, an email has been sent.'));
+        $App->Session->getFlashBag()->add('ok', _('If the account exists, an email has been sent.'));
+        return;
     }
 
     // PART 2: update the password
@@ -115,21 +121,19 @@ try {
         }
         $App->Session->getFlashBag()->add('ok', _('New password inserted. You can now login.'));
     }
-} catch (QuantumException $e) {
-    $App->Session->getFlashBag()->add('ok', $e->getMessage());
+} catch (IllegalActionException $e) {
+    $App->Log->notice('', array(array('userid' => $App->Session->get('userid')), array('IllegalAction', $e)));
+    $App->Session->getFlashBag()->add('ko', Messages::InsufficientPermissions->toHuman());
 } catch (ImproperActionException $e) {
     // show message to user and redirect to the change pass page
     $App->Session->getFlashBag()->add('ko', $e->getMessage());
     $Response = new RedirectResponse('/change-pass.php?key=' . $App->Request->request->getString('key'));
-} catch (IllegalActionException $e) {
-    $App->Log->notice('', array(array('userid' => $App->Session->get('userid')), array('IllegalAction', $e)));
-    $App->Session->getFlashBag()->add('ko', Tools::error(true));
-} catch (DatabaseErrorException | FilesystemErrorException $e) {
+} catch (DatabaseErrorException $e) {
     $App->Log->error('', array(array('userid' => $App->Session->get('userid')), array('Error', $e)));
     $App->Session->getFlashBag()->add('ko', $e->getMessage());
 } catch (Exception $e) {
     $App->Log->warning('Reset password failed attempt', array(array('ip' => $App->Request->server->get('REMOTE_ADDR')), array('exception' => $e)));
-    $App->Session->getFlashBag()->add('ko', Tools::error());
+    $App->Session->getFlashBag()->add('ko', Messages::GenericError->toHuman());
 } finally {
     $Response->send();
 }

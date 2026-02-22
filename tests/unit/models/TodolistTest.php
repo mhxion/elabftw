@@ -1,4 +1,6 @@
-<?php declare(strict_types=1);
+<?php
+
+declare(strict_types=1);
 /**
  * @author Nicolas CARPi <nico-git@deltablot.email>
  * @copyright 2022 Nicolas CARPi
@@ -9,8 +11,8 @@
 
 namespace Elabftw\Models;
 
-use Elabftw\Elabftw\OrderingParams;
 use Elabftw\Enums\Action;
+use Elabftw\Params\OrderingParams;
 
 class TodolistTest extends \PHPUnit\Framework\TestCase
 {

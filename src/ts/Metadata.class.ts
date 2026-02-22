@@ -5,30 +5,35 @@
  * @license AGPL-3.0
  * @package elabftw
  */
+import i18next from './i18n';
+import { ApiC } from './api';
 import { Action, Entity, EntityType } from './interfaces';
-import { adjustHiddenState, makeSortableGreatAgain, notifError, reloadElements } from './misc';
-import i18next from 'i18next';
-import { Api } from './Apiv2.class';
-import { ValidMetadata, ExtraFieldProperties, ExtraFieldsGroup, ExtraFieldInputType } from './metadataInterfaces';
 import JsonEditorHelper from './JsonEditorHelper.class';
+import { ExtraFieldInputType, ExtraFieldProperties, ExtraFieldsGroup, ValidMetadata } from './metadataInterfaces';
+import { adjustHiddenState, makeSortableGreatAgain, reloadElements, replaceWithTitle } from './misc';
+import { notify } from './notify';
 
 export function ResourceNotFoundException(message: string): void {
   this.message = message;
   this.name = 'ResourceNotFoundException';
 }
 
+// Auto-resize the textarea to prevent hidden lines on page load
+export function autoResize(element: HTMLTextAreaElement): void {
+  element.style.height = 'auto';
+  element.style.height = `${element.scrollHeight}px`;
+}
+
 export class Metadata {
   entity: Entity;
   editor: JsonEditorHelper;
   model: EntityType;
-  api: Api;
   metadataDiv: Element;
 
   constructor(entity: Entity, jsonEditor: JsonEditorHelper) {
     this.entity = entity;
     this.editor = jsonEditor;
     this.model = entity.type;
-    this.api = new Api();
     // this is the div that will hold all the generated fields from metadata json
     this.metadataDiv = document.getElementById('metadataDiv');
   }
@@ -37,12 +42,20 @@ export class Metadata {
    * Get the json from the metadata column
    */
   read(): Promise<Record<string, unknown>|ValidMetadata> {
-    return this.api.getJson(`${this.entity.type}/${this.entity.id}`).then(json => {
+    return ApiC.getJson(`${this.entity.type}/${this.entity.id}`).then(json => {
       // if there are no metadata.json file available, return an empty object
       if (typeof json.metadata === 'undefined' || !json.metadata) {
         return {};
       }
       return JSON.parse(json.metadata);
+    });
+  }
+
+  toggleReadonly(fieldName: string, readonly: boolean): Promise<void> {
+    return this.read().then(metadata => {
+      if (!metadata.extra_fields || !metadata.extra_fields[fieldName]) return;
+      metadata.extra_fields[fieldName].readonly = readonly;
+      return this.save(metadata as ValidMetadata).then(() => this.display('edit'));
     });
   }
 
@@ -59,10 +72,10 @@ export class Metadata {
     }
 
     // prevent self links
-    if (el.dataset.completeTarget === document.getElementById('info').dataset.type
+    if (el.dataset.target === document.getElementById('info').dataset.type
       && parseInt(el.value, 10) === parseInt(document.getElementById('info').dataset.id, 10)
     ) {
-      notifError(new Error(i18next.t('no-self-links')));
+      notify.error('no-self-links');
       return false;
     }
 
@@ -78,17 +91,20 @@ export class Metadata {
       value = [...el.selectedOptions].map(option => option.value);
     }
     // special case for Experiment/Resource/User link
-    if ([ExtraFieldInputType.Experiments.valueOf(), ExtraFieldInputType.Items.valueOf(), ExtraFieldInputType.Users.valueOf()].includes(el.dataset.completeTarget)) {
+    if ([ExtraFieldInputType.Experiments.valueOf(), ExtraFieldInputType.Items.valueOf(), ExtraFieldInputType.Users.valueOf(), ExtraFieldInputType.Compounds.valueOf()].includes(el.dataset.target)) {
       value = parseInt(value.split(' ')[0], 10);
-      // also create a link automatically for experiments and resources
-      if ([ExtraFieldInputType.Experiments.valueOf(), ExtraFieldInputType.Items.valueOf()].includes(el.dataset.completeTarget)) {
-        this.api.post(`${this.entity.type}/${this.entity.id}/${el.dataset.completeTarget}_links/${value}`).then(() => reloadElements(['linksDiv', 'linksExpDiv']));
+      if (isNaN(value)) {
+        return false;
+      }
+      // also create a link automatically for experiments, resources and compounds.
+      if ([ExtraFieldInputType.Experiments.valueOf(), ExtraFieldInputType.Items.valueOf(), ExtraFieldInputType.Compounds.valueOf()].includes(el.dataset.target)) {
+        ApiC.post(`${this.entity.type}/${this.entity.id}/${el.dataset.target}_links/${value}`).then(() => reloadElements(['linksDiv', 'linksExpDiv']));
       }
     }
     const params = {};
     params['action'] = Action.UpdateMetadataField;
     params[el.dataset.field] = value;
-    this.api.patch(`${this.entity.type}/${this.entity.id}`, params).then(() => {
+    ApiC.patch(`${this.entity.type}/${this.entity.id}`, params).then(() => {
       this.editor.loadMetadata();
     }).catch(() => {
       return;
@@ -113,13 +129,75 @@ export class Metadata {
   }
 
   save(metadata: ValidMetadata): Promise<Response> {
-    return this.api.patch(`${this.entity.type}/${this.entity.id}`, {'metadata': JSON.stringify(metadata)});
+    return ApiC.patch(`${this.entity.type}/${this.entity.id}`, {'metadata': JSON.stringify(metadata)});
+  }
+
+  /**
+   * Cleanup extra fields and group of extra fields
+   */
+  cleanupMetadata(metadata: ValidMetadata): void {
+    // remove empty extra_fields
+    if (metadata.extra_fields && Object.keys(metadata.extra_fields).length === 0) {
+      delete metadata.extra_fields;
+    }
+    // clean extra_fields_groups
+    if (metadata.elabftw?.extra_fields_groups) {
+      // when there are no fields, all groups are unused
+      if (!metadata.extra_fields) {
+        delete metadata.elabftw.extra_fields_groups;
+      } else {
+        // otherwise, keep only groups still referenced
+        const usedGroupIds = new Set<number>(
+          Object.values(metadata.extra_fields)
+            .map(f => f.group_id)
+            .filter((id): id is number => typeof id === 'number'),
+        );
+        metadata.elabftw.extra_fields_groups =
+          metadata.elabftw.extra_fields_groups.filter(group =>
+            usedGroupIds.has(group.id),
+          );
+        if (metadata.elabftw.extra_fields_groups.length === 0) {
+          delete metadata.elabftw.extra_fields_groups;
+        }
+      }
+    }
+    // final cleanup: remove empty elabftw object
+    if (metadata.elabftw && Object.keys(metadata.elabftw).length === 0) {
+      delete metadata.elabftw;
+    }
+  }
+
+  /**
+   * Build text areas for extra fields (default type)
+   */
+  buildTextArea(name, properties: ExtraFieldProperties): HTMLTextAreaElement {
+    const element = document.createElement('textarea');
+
+    // style it to look like an input & reset height
+    element.classList.add('form-control', 'form-textarea');
+    element.rows = 1;
+
+    // dynamic height on input
+    element.addEventListener('input', () => autoResize(element));
+
+    // resize after rendering: ensures proper height on page load
+    requestAnimationFrame(() => autoResize(element));
+
+    if (properties.value) {
+      element.value = properties.value as string;
+    }
+    if (Object.prototype.hasOwnProperty.call(properties, 'required')) {
+      element.required = true;
+    }
+    element.dataset.field = name;
+    element.addEventListener('change', this, false);
+    return element;
   }
 
   /**
    * For radio we need a special build workflow
    */
-  buildRadio(name: string, properties: ExtraFieldProperties): Element { // eslint-disable-line
+  buildRadio(name: string, properties: ExtraFieldProperties): Element {
     // a div to hold the different elements so we can return a single Element
     const element = document.createElement('div');
     element.dataset.purpose = 'radio-holder';
@@ -137,6 +215,7 @@ export class Metadata {
       radioInput.id = this.getRandomId();
       // add a data-field attribute so we know what to update on change
       radioInput.dataset.field = name;
+      radioInput.disabled = properties.readonly === true;
       radioInputs.push(radioInput);
     }
 
@@ -163,7 +242,12 @@ export class Metadata {
     if (mode === 'view') {
       return this.generateViewableElement(name, properties);
     }
-    return this.generateInput(name, properties);
+    try {
+      return this.generateInput(name, properties);
+    } catch (err) {
+      notify.error('error-parsing-metadata');
+      console.error(err);
+    }
   }
 
   /**
@@ -203,6 +287,11 @@ export class Metadata {
       if (properties.type === ExtraFieldInputType.Url) {
         valueEl.dataset.genLink = 'true';
       }
+      if ([ExtraFieldInputType.Experiments.valueOf(), ExtraFieldInputType.Items.valueOf(), ExtraFieldInputType.Users.valueOf(), ExtraFieldInputType.Compounds.valueOf()].includes(properties.type)) {
+        valueEl.dataset.replaceWithTitle = 'true';
+        valueEl.dataset.endpoint = properties.type;
+        valueEl.dataset.id = properties.value as string;
+      }
     }
     const valueWrapper = document.createElement('div');
     // set the value on the right
@@ -218,7 +307,7 @@ export class Metadata {
    */
   generateInput(name: string, properties: ExtraFieldProperties): Element {
     // we don't know yet which kind of element it will be
-    let element: HTMLInputElement|HTMLSelectElement;
+    let element: HTMLInputElement|HTMLSelectElement|HTMLTextAreaElement;
     // generate a unique id for the element so we can associate the label properly
     const uniqid = this.getRandomId();
 
@@ -253,11 +342,17 @@ export class Metadata {
         element.add(optionEl);
       }
       break;
+    case ExtraFieldInputType.Experiments:
+    case ExtraFieldInputType.Items:
+    case ExtraFieldInputType.Users:
+    case ExtraFieldInputType.Compounds:
+      element = document.createElement('input');
+      element.type = 'text';
+      break;
     case ExtraFieldInputType.Radio:
       return this.buildRadio(name, properties);
     default:
-      element = document.createElement('input');
-      element.type = 'text';
+      element = this.buildTextArea(name, properties);
     }
 
     // add the unique id to the element
@@ -275,12 +370,13 @@ export class Metadata {
     if (Object.prototype.hasOwnProperty.call(properties, 'required')) {
       element.required = true;
     }
+    const mustDisable = element instanceof HTMLSelectElement ||
+      (element instanceof HTMLInputElement && ['checkbox', 'radio'].includes(element.type));
     if (Object.prototype.hasOwnProperty.call(properties, 'readonly') && properties.readonly === true) {
-      // readonly is not supported by select elements, but disabled is
-      if (element instanceof HTMLSelectElement) {
+      if (mustDisable) {
         element.disabled = true;
       } else {
-        element.readOnly = true;
+        (element as HTMLInputElement | HTMLTextAreaElement).readOnly = true;
       }
     }
 
@@ -331,16 +427,16 @@ export class Metadata {
       for (const unit of properties.units) {
         const optionEl = document.createElement('option');
         optionEl.text = unit;
-        if (properties.unit === unit) {
-          optionEl.setAttribute('selected', '');
-        }
         unitsSel.add(optionEl);
       }
+      // if no default unit is set, auto-select first option. See #5680
+      unitsSel.value = properties.unit || properties.units[0];
       unitsSel.classList.add('form-control', 'brl-none');
       // add this so we can differentiate the change event from the main input
       unitsSel.dataset.units = '1';
       unitsSel.addEventListener('change', this, false);
       appendDiv.appendChild(unitsSel);
+      unitsSel.disabled = properties.readonly === true;
       // input first, then append div
       inputGroupDiv.appendChild(element);
       inputGroupDiv.appendChild(appendDiv);
@@ -350,9 +446,10 @@ export class Metadata {
     }
 
     // USERS/EXPERIMENTS/ITEMS input have a prepend to the input with a magnifying glass
-    if ([ExtraFieldInputType.Users, ExtraFieldInputType.Experiments, ExtraFieldInputType.Items].includes(properties.type)) {
+    if ([ExtraFieldInputType.Users, ExtraFieldInputType.Experiments, ExtraFieldInputType.Items, ExtraFieldInputType.Compounds].includes(properties.type)) {
       // set the target for autocomplete function
-      element.dataset.completeTarget = properties.type;
+      element.dataset.target = properties.type;
+      element.dataset.action = 'autocomplete';
       const inputGroupDiv = document.createElement('div');
       inputGroupDiv.classList.add('input-group');
       const prependDiv = document.createElement('div');
@@ -367,6 +464,13 @@ export class Metadata {
       inputGroupDiv.appendChild(element);
       // add the unique id to the input group for the label
       inputGroupDiv.id = uniqid;
+      // we want to replace the bare id value with "id - title" or "userid - fullname" for users
+      const targetId = parseInt(element.value.split(' ')[0]);
+      if (!isNaN(targetId)) {
+        element.dataset.replaceWithTitle = 'true';
+        element.dataset.id = String(targetId);
+        element.dataset.endpoint = properties.type;
+      }
 
       return inputGroupDiv;
     }
@@ -429,6 +533,10 @@ export class Metadata {
         groupWrapperDiv.append(document.createElement('hr'));
         this.metadataDiv.append(groupWrapperDiv);
       });
+      // refresh the existing groups select on update (see 5611)
+      reloadElements(['newFieldGroupSelect', 'fieldsGroup']);
+    }).then (() => {
+      replaceWithTitle();
     });
   }
 
@@ -494,8 +602,9 @@ export class Metadata {
   edit(): Promise<void> {
     return this.read().then(json => {
       this.editor.refresh(json as ValidMetadata);
-      // do nothing more if there is no extra_fields in our json
+      // clean groups field if they're removed via json editor
       if (!Object.prototype.hasOwnProperty.call(json, 'extra_fields')) {
+        reloadElements(['newFieldGroupSelect', 'fieldsGroup']);
         return;
       }
 
@@ -510,6 +619,8 @@ export class Metadata {
           groupWrapperDiv.classList.add('mt-4');
           const groupHeader = document.createElement('h4');
           groupHeader.dataset.action='toggle-next';
+          groupHeader.dataset.openedIcon='fa-caret-down';
+          groupHeader.dataset.closedIcon='fa-caret-right';
           groupHeader.classList.add('d-inline', 'togglable-section-title');
           const groupHeaderIcon = document.createElement('i');
           groupHeaderIcon.classList.add('fas', 'fa-caret-down', 'fa-fw', 'mr-2');
@@ -541,7 +652,29 @@ export class Metadata {
             label.classList.add('py-2');
 
             // div to hold the drag and delete buttons
-            const handleDeleteDiv = document.createElement('div');
+            const fieldActionsDiv = document.createElement('div');
+            fieldActionsDiv.classList.add('d-flex', 'align-items-center');
+
+            // add a badge indicating the field's type
+            const badgeContainer = document.createElement('div');
+            const badge = document.createElement('span');
+            badge.classList.add('badge', 'badge-pill', 'badge-light', 'mr-3');
+            // define input type for badge. This "type" is just indicative for the badge.
+            let inputType;
+            if (element.element.tagName === 'INPUT' || element.element.tagName === 'SELECT') {
+              inputType = element.element.type;
+            } else if (element.element.tagName === 'TEXTAREA') {
+              inputType = 'text';
+            } else if (element.element.classList.contains('input-group')) {
+              // find the first input element within the input group
+              const input = element.element.querySelector('input');
+              inputType = input ? input.type : 'unknown';
+            } else {
+              // radio is only "special case" and too many conditions to identify it
+              inputType = 'radio';
+            }
+            badge.innerText = inputType;
+            badgeContainer.appendChild(badge);
 
             // add a button to set the position of the field
             const handle = document.createElement('div');
@@ -554,19 +687,52 @@ export class Metadata {
             handleIconSpan.appendChild(handleIcon);
             handle.appendChild(handleIconSpan);
 
+            // button to edit the field
+            const editBtn = document.createElement('button');
+            editBtn.dataset.action = 'metadata-edit-field';
+            editBtn.dataset.target = 'fieldBuilderModal';
+            editBtn.classList.add('btn', 'p-2', 'mr-2', 'hl-hover-gray', 'border-0', 'lh-normal');
+            editBtn.type = 'button';
+            editBtn.setAttribute('aria-label', i18next.t('edit'));
+            editBtn.setAttribute('title', i18next.t('edit'));
+            const editIcon = document.createElement('i');
+            editIcon.classList.add('fas', 'fa-pencil-alt');
+            editBtn.appendChild(editIcon);
+
+            // add a button to toggle read-only
+            const readonlyBtn = document.createElement('button');
+            readonlyBtn.classList.add('btn', 'p-2', 'mr-2', 'hl-hover-gray', 'border-0', 'lh-normal');
+            readonlyBtn.type = 'button';
+            readonlyBtn.setAttribute('aria-label', i18next.t('readonly'));
+            readonlyBtn.setAttribute('title', i18next.t('readonly'));
+            const readonlyIcon = document.createElement('i');
+            readonlyIcon.classList.add('fas');
+            readonlyBtn.appendChild(readonlyIcon);
+            let isReadonly = (json as ValidMetadata)
+              .extra_fields[element.name]?.readonly === true;
+            readonlyIcon.classList.toggle('fa-lock', isReadonly);
+            readonlyIcon.classList.toggle('fa-lock-open', !isReadonly);
+            readonlyBtn.addEventListener('click', () => {
+              isReadonly = !isReadonly;
+              this.toggleReadonly(element.name, isReadonly).catch(() => {
+                notify.error('error-saving-metadata');
+              });
+            });
+
             // add a button to delete the field
             const deleteBtn = document.createElement('button');
             deleteBtn.dataset.action = 'metadata-rm-field';
             deleteBtn.classList.add('btn', 'p-2', 'hl-hover-gray', 'border-0', 'lh-normal');
+            deleteBtn.type = 'button';
+            deleteBtn.setAttribute('aria-label', i18next.t('remove'));
+            deleteBtn.setAttribute('title', i18next.t('remove'));
             const deleteIcon = document.createElement('i');
             deleteIcon.classList.add('fas', 'fa-trash-alt');
             deleteBtn.appendChild(deleteIcon);
 
-            handleDeleteDiv.appendChild(handle);
-            handleDeleteDiv.appendChild(deleteBtn);
+            fieldActionsDiv.append(badgeContainer, handle, editBtn, readonlyBtn, deleteBtn);
 
-            labelDiv.append(label);
-            labelDiv.append(handleDeleteDiv);
+            labelDiv.append(label, fieldActionsDiv);
 
             // for checkboxes the label comes second
             if (element.element.type === 'checkbox') {
@@ -583,9 +749,8 @@ export class Metadata {
               listItem.append(element.element);
             }
 
-            // this is useful for Sortable (re-ordering the elements): it needs to have an id
-            // and we use the label to get the name of the field
-            listItem.id = label.innerText;
+            // the data-name attribute is picked up by Sortable jquery-ui. Do not use the default id attribute as it's not a number.
+            listItem.dataset.name = label.innerText;
 
             wrapperUl.append(listItem);
           }
@@ -596,6 +761,10 @@ export class Metadata {
       });
 
       this.metadataDiv.append(wrapperDiv);
-    }).then(() => makeSortableGreatAgain());
+      reloadElements(['newFieldGroupSelect', 'fieldsGroup']);
+    }).then(() => {
+      makeSortableGreatAgain();
+      replaceWithTitle();
+    });
   }
 }

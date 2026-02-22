@@ -1,4 +1,6 @@
-<?php declare(strict_types=1);
+<?php
+
+declare(strict_types=1);
 /**
  * @author Nicolas CARPi <nico-git@deltablot.email>
  * @copyright 2022 Nicolas CARPi
@@ -10,23 +12,26 @@
 namespace Elabftw\Services;
 
 use Elabftw\Enums\Action;
+use Elabftw\Enums\Usergroup;
 use Elabftw\Exceptions\IllegalActionException;
-use Elabftw\Exceptions\ImproperActionException;
 use Elabftw\Models\Config;
-use Elabftw\Models\Users;
+use Elabftw\Models\Users\Users;
+use Elabftw\Traits\TestsUtilsTrait;
 
 class UserCreatorTest extends \PHPUnit\Framework\TestCase
 {
+    use TestsUtilsTrait;
+
     private UserCreator $UserCreator;
 
     protected function setUp(): void
     {
-        $this->UserCreator = new UserCreator(new Users(1, 1), array(
+        $this->UserCreator = new UserCreator($this->getUserInTeam(1, admin: 1), array(
             'team' => 1,
             'email' => 'livelongandprosper@vulcan.gov.vn',
             'firstname' => 'Leonard',
             'lastname' => 'Nimoy',
-            'usergroup' => 4,
+            'usergroup' => Usergroup::User->value,
         ));
     }
 
@@ -43,26 +48,27 @@ class UserCreatorTest extends \PHPUnit\Framework\TestCase
 
     public function testCreateFromAdminUser(): void
     {
-        $UserCreator = new UserCreator(new Users(5, 2), array(
+        $Admin = $this->getUserInTeam(team: 2, admin: 1);
+        $UserCreator = new UserCreator($Admin, array(
             'team' => 2,
             'email' => 'praisetheprophets@staff.ds9.bjr',
             'firstname' => 'Kira',
             'lastname' => 'Nerys',
-            'usergroup' => 4,
+            'usergroup' => Usergroup::User->value,
         ));
         $this->assertIsInt($UserCreator->create());
     }
 
     public function testCreateSysadminFromAdminUser(): void
     {
-        $UserCreator = new UserCreator(new Users(5, 2), array(
+        $UserCreator = new UserCreator($this->getUserInTeam(2), array(
             'team' => 2,
             'email' => 'vic@holodeck.ds9.bjr',
             'firstname' => 'Vic',
             'lastname' => 'Fontaine',
-            'usergroup' => 1,
+            'usergroup' => Usergroup::Sysadmin->value,
         ));
-        $this->expectException(ImproperActionException::class);
+        $this->expectException(IllegalActionException::class);
         $UserCreator->create();
     }
 
@@ -75,7 +81,7 @@ class UserCreatorTest extends \PHPUnit\Framework\TestCase
             'email' => 'vic@holodeck.ds9.bjr',
             'firstname' => 'Vic',
             'lastname' => 'Fontaine',
-            'usergroup' => 1,
+            'usergroup' => Usergroup::Sysadmin->value,
         ));
         $this->expectException(IllegalActionException::class);
         $UserCreator->create();

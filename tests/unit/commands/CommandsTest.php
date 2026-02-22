@@ -1,4 +1,6 @@
-<?php declare(strict_types=1);
+<?php
+
+declare(strict_types=1);
 /**
  * @author Nicolas CARPi <nico-git@deltablot.email>
  * @copyright 2023 Nicolas CARPi
@@ -11,11 +13,12 @@ namespace Elabftw\Commands;
 
 use Elabftw\Models\Config;
 use Elabftw\Services\Email;
-use Elabftw\Services\MfaHelperTest;
+use Elabftw\Services\MfaHelper;
 use Elabftw\Storage\Fixtures;
 use Elabftw\Storage\Memory;
 use Monolog\Handler\NullHandler;
 use Monolog\Logger;
+use Symfony\Component\Console\Application;
 use Symfony\Component\Console\Output\OutputInterface;
 use Symfony\Component\Console\Tester\CommandTester;
 use Symfony\Component\Mailer\MailerInterface;
@@ -33,7 +36,7 @@ class CommandsTest extends \PHPUnit\Framework\TestCase
         // use NullHandler because we don't care about logs here
         $Logger->pushHandler(new NullHandler());
         $MockMailer = $this->createMock(MailerInterface::class);
-        $this->Email = new Email($MockMailer, $Logger, 'toto@yopmail.com');
+        $this->Email = new Email($MockMailer, $Logger, 'toto@yopmail.com', demoMode: false);
     }
 
     public function testCheckTsBalance(): void
@@ -56,13 +59,6 @@ class CommandsTest extends \PHPUnit\Framework\TestCase
         $commandTester->execute(array());
         $commandTester->assertCommandIsSuccessful();
         $this->assertStringContainsString('def', $commandTester->getDisplay());
-    }
-
-    public function testExecuteAddMissingLinks(): void
-    {
-        $commandTester = new CommandTester(new AddMissingLinks());
-        $commandTester->execute(array());
-        $commandTester->assertCommandIsSuccessful();
     }
 
     public function testExecuteCleanDatabase(): void
@@ -117,7 +113,7 @@ class CommandsTest extends \PHPUnit\Framework\TestCase
     public function testMfaCode(): void
     {
         $commandTester = new CommandTester(new MfaCode());
-        $commandTester->execute(array('secret' => MfaHelperTest::SECRET));
+        $commandTester->execute(array('secret' => new MfaHelper()->secret));
         $commandTester->assertCommandIsSuccessful();
         $this->assertStringContainsString('2FA code:', $commandTester->getDisplay());
     }
@@ -136,14 +132,6 @@ class CommandsTest extends \PHPUnit\Framework\TestCase
         $commandTester->execute(array());
         $commandTester->assertCommandIsSuccessful();
         $this->assertStringContainsString('Removed', $commandTester->getDisplay());
-    }
-
-    public function testPruneRevisions(): void
-    {
-        $commandTester = new CommandTester(new PruneRevisions());
-        $commandTester->execute(array());
-        $commandTester->assertCommandIsSuccessful();
-        $this->assertStringContainsString('Revisions pruning', $commandTester->getDisplay());
     }
 
     public function testPruneUploads(): void
@@ -187,45 +175,28 @@ class CommandsTest extends \PHPUnit\Framework\TestCase
         $this->assertStringContainsString('An upgrade is required.', $commandTester->getDisplay());
     }
 
-    public function testExecuteImportResources(): void
+    public function testExecuteImportEln(): void
     {
-        $commandTester = new CommandTester(new ImportResources(new Fixtures()));
+        // make sure to declare the command as part of the application or the question helper cannot be retrieved
+        $command = new ImportEln(new Fixtures());
+        $application = new Application();
+        $command->setApplication($application);
+        $commandTester = new CommandTester($command);
         $commandTester->execute(array(
-            'category_id' => '1',
-            'userid' => '1',
             'file' => 'single-experiment.eln',
+            'teamid' => '2',
+            '--userid' => '4',
+            '--dry-run' => true,
         ));
 
         $commandTester->assertCommandIsSuccessful();
     }
 
-    public function testExecuteImportUser(): void
+    public function testExecuteExportEln(): void
     {
-        $commandTester = new CommandTester(new ImportUser(new Fixtures()));
+        $commandTester = new CommandTester(new ExportEln(new Memory()));
         $commandTester->execute(array(
-            'userid' => '1',
-            'file' => 'single-experiment.eln',
-        ));
-
-        $commandTester->assertCommandIsSuccessful();
-    }
-
-    public function testExecuteExportUser(): void
-    {
-        $commandTester = new CommandTester(new ExportUser(new Memory()));
-        $commandTester->execute(array(
-            'userid' => '1',
-        ));
-
-        $commandTester->assertCommandIsSuccessful();
-    }
-
-    public function testExecuteExportResources(): void
-    {
-        $commandTester = new CommandTester(new ExportResources(new Memory()));
-        $commandTester->execute(array(
-            'category_id' => '1',
-            'userid' => '1',
+            'teamid' => '1',
         ));
 
         $commandTester->assertCommandIsSuccessful();
@@ -250,6 +221,29 @@ class CommandsTest extends \PHPUnit\Framework\TestCase
     public function testUploadsCheck(): void
     {
         $commandTester = new CommandTester(new CheckUploads());
+        $commandTester->execute(array());
+        $commandTester->assertCommandIsSuccessful();
+    }
+
+    public function testRefreshIdps(): void
+    {
+        $commandTester = new CommandTester(new RefreshIdps(''));
+        $commandTester->execute(array());
+        $commandTester->assertCommandIsSuccessful();
+    }
+
+    public function testFingerprintCompounds(): void
+    {
+        $commandTester = new CommandTester(new FingerprintCompounds());
+        $commandTester->execute(array(
+            '--dry-run' => true,
+        ));
+        $commandTester->assertCommandIsSuccessful();
+    }
+
+    public function testClearNotifications(): void
+    {
+        $commandTester = new CommandTester(new ClearNotifications());
         $commandTester->execute(array());
         $commandTester->assertCommandIsSuccessful();
     }

@@ -1,4 +1,6 @@
-<?php declare(strict_types=1);
+<?php
+
+declare(strict_types=1);
 /**
  * @author Nicolas CARPi <nico-git@deltablot.email>
  * @copyright 2012 Nicolas CARPi
@@ -9,11 +11,11 @@
 
 namespace Elabftw\Services;
 
-use Defuse\Crypto\Exception\WrongKeyOrModifiedCiphertextException;
 use Defuse\Crypto\Key;
 use Elabftw\Exceptions\IllegalActionException;
 use Elabftw\Exceptions\ImproperActionException;
-use Elabftw\Models\Users;
+use Elabftw\Models\Users\Users;
+
 use function time;
 
 class ResetPasswordKeyTest extends \PHPUnit\Framework\TestCase
@@ -38,7 +40,7 @@ class ResetPasswordKeyTest extends \PHPUnit\Framework\TestCase
 
     public function testValidateInvalidKey(): void
     {
-        $this->expectException(WrongKeyOrModifiedCiphertextException::class);
+        $this->expectException(ImproperActionException::class);
         $this->ResetPasswordKey->validate('invalid-key');
     }
 

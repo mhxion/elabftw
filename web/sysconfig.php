@@ -1,4 +1,5 @@
-<?php declare(strict_types=1);
+<?php
+
 /**
  * @author Nicolas CARPi <nico-git@deltablot.email>
  * @copyright 2012 Nicolas CARPi
@@ -7,73 +8,51 @@
  * @package elabftw
  */
 
+declare(strict_types=1);
+
 namespace Elabftw\Elabftw;
 
 use Elabftw\Enums\AuditCategory;
+use Elabftw\Enums\BasePermissions;
 use Elabftw\Enums\EnforceMfa;
 use Elabftw\Enums\PasswordComplexity;
-use Elabftw\Exceptions\IllegalActionException;
+use Elabftw\Exceptions\AppException;
 use Elabftw\Models\AuditLogs;
 use Elabftw\Models\AuthFail;
 use Elabftw\Models\Experiments;
 use Elabftw\Models\Idps;
+use Elabftw\Models\IdpsSources;
 use Elabftw\Models\Info;
-use Elabftw\Models\Teams;
+use Elabftw\Models\StorageUnits;
 use Elabftw\Services\DummyRemoteDirectory;
 use Elabftw\Services\EairefRemoteDirectory;
-use Elabftw\Services\UsersHelper;
+use Elabftw\Services\UploadsChecker;
 use Exception;
 use GuzzleHttp\Client;
 use PDO;
 use Symfony\Component\HttpFoundation\Response;
+use ValueError;
+
+use function array_walk;
 
 /**
- * Administrate elabftw install
- *
+ * Instance level settings and tools
  */
 require_once 'app/init.inc.php';
-$App->pageTitle = _('eLabFTW Configuration');
-/** @psalm-suppress UncaughtThrowInGlobalScope */
+
 $Response = new Response();
-$Response->prepare($App->Request);
-
-$template = 'error.html';
-$renderArr = array();
-
 try {
-    if (!$App->Users->userData['is_sysadmin']) {
-        throw new IllegalActionException('Non sysadmin user tried to access sysconfig panel.');
-    }
+    $Response->prepare($App->Request);
+
+    $App->Users->isSysadminOrExplode();
 
     $AuthFail = new AuthFail();
-    $Idps = new Idps();
-    $idpsArr = $Idps->readAll();
-    $Teams = new Teams($App->Users);
-    $teamsArr = $Teams->readAll();
+    $Idps = new Idps($App->Users);
+    $idpsArr = $Idps->readAllLight();
+    $IdpsSources = new IdpsSources($App->Users);
+    $idpsSources = $IdpsSources->readAll();
+    $teamsArr = $App->Teams->readAllComplete();
     $Experiments = new Experiments($App->Users);
-
-    // Users search
-    $isSearching = false;
-    $usersArr = array();
-    if ($App->Request->query->has('q')) {
-        $isSearching = true;
-        $usersArr = $App->Users->readFromQuery(
-            $App->Request->query->getString('q'),
-            $App->Request->query->getInt('teamFilter'),
-            $App->Request->query->getBoolean('includeArchived'),
-            $App->Request->query->getBoolean('onlyAdmins'),
-        );
-        foreach ($usersArr as &$user) {
-            $UsersHelper = new UsersHelper((int) $user['userid']);
-            $user['teams'] = $UsersHelper->getTeamsFromUserid();
-        }
-        // further filter if userid is present
-        if ($App->Request->query->has('userid')) {
-            $usersArr = array_filter($usersArr, function ($u) use ($App) {
-                return $u['userid'] === $App->Request->query->getInt('userid');
-            });
-        }
-    }
 
     // Remote directory search
     $remoteDirectoryUsersArr = array();
@@ -85,7 +64,7 @@ try {
         }
         $remoteDirectoryUsersArr = $RemoteDirectory->search($App->Request->query->getString('remote_dir_query'));
         if (empty($remoteDirectoryUsersArr)) {
-            $App->warning[] = _('No users found. Try another search.');
+            $App->Session->getFlashBag()->add('warning', _('No users found. Try another search.'));
         }
     }
 
@@ -118,38 +97,45 @@ try {
 
     $elabimgVersion = getenv('ELABIMG_VERSION') ?: 'Not in Docker';
     $auditLogsArr = AuditLogs::read($App->Request->query->getInt('limit', AuditLogs::DEFAULT_LIMIT), $App->Request->query->getInt('offset'));
-    array_walk($auditLogsArr, function (&$event) {
-        $event['category'] = AuditCategory::from($event['category'])->name;
+    array_walk($auditLogsArr, function (array &$event) {
+        try {
+            $event['category'] = AuditCategory::from($event['category'])->name;
+        } catch (ValueError) {
+        }
     });
     $passwordComplexity = PasswordComplexity::from((int) $App->Config->configArr['password_complexity_requirement']);
+    $StorageUnits = new StorageUnits($App->Users, false);
     $template = 'sysconfig.html';
     $renderArr = array(
         'Request' => $App->Request,
         'auditLogsArr' => $auditLogsArr,
+        'containersCount' => $StorageUnits->readCount(),
         'nologinUsersCount' => $AuthFail->getLockedUsersCount(),
         'lockoutDevicesCount' => $AuthFail->getLockoutDevicesCount(),
         'elabimgVersion' => $elabimgVersion,
         'idpsArr' => $idpsArr,
-        'isSearching' => $isSearching,
-        'passwordInputHelp' => PasswordComplexity::toHuman($passwordComplexity),
-        'passwordInputPattern' => PasswordComplexity::toPattern($passwordComplexity),
+        'idpsSources' => $idpsSources,
+        'pageTitle' => _('Instance settings'),
+        'passwordInputHelp' => $passwordComplexity->toHuman(),
+        'passwordInputPattern' => $passwordComplexity->toPattern(),
         'phpInfos' => $phpInfos,
         'remoteDirectoryUsersArr' => $remoteDirectoryUsersArr,
         'samlSecuritySettings' => $samlSecuritySettings,
-        'Teams' => $Teams,
+        // disabled as we don't use getStats here now
+        //'Teams' => $Teams,
         'teamsArr' => $teamsArr,
-        'info' => (new Info())->readAll(),
+        'info' => new Info()->readAll(),
         'timestampLastMonth' => $Experiments->getTimestampLastMonth(),
-        'usersArr' => $usersArr,
+        'uploadsStats' => UploadsChecker::getStats(),
         'enforceMfaArr' => EnforceMfa::getAssociativeArray(),
         'passwordComplexityArr' => PasswordComplexity::getAssociativeArray(),
+        'permissions' => BasePermissions::cases(),
     );
-} catch (IllegalActionException $e) {
-    $renderArr['error'] = Tools::error(true);
-} catch (Exception $e) {
-    $App->Log->error('', array(array('userid' => $App->Session->get('userid')), array('Exception' => $e)));
-    $renderArr['error'] = $e->getMessage();
-} finally {
     $Response->setContent($App->render($template, $renderArr));
+} catch (AppException $e) {
+    $Response = $e->getResponseFromException($App);
+} catch (Exception $e) {
+    $Response = $App->getResponseFromException($e);
+} finally {
     $Response->send();
 }

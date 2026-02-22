@@ -13,19 +13,22 @@ declare global {
   }
 }
 
-import '@teselagen/ove';
-import '@teselagen/ove/style.css';
 import { anyToJson } from '@teselagen/bio-parsers';
-import { notif, reloadElement } from './misc';
-import { Action, Model } from './interfaces';
-import { Api } from './Apiv2.class';
+import { reloadElements } from './misc';
+import { Action, Entity, Model } from './interfaces';
+import { ApiC } from './api';
+import { notify } from './notify';
 
 // DISPLAY Plasmids FILES
-export function displayPlasmidViewer(about: DOMStringMap): void {
+export async function displayPlasmidViewer(entity: Entity): Promise<void> {
+  const elements = document.getElementsByClassName('viewer-ove');
+  if (elements.length < 1) {
+    return;
+  }
+  await import('@teselagen/ove');
   /* eslint-disable-next-line */
   const editor: any = {};
-  const ApiC = new Api();
-  Array.from(document.getElementsByClassName('viewer-ove')).forEach(el => {
+  Array.from(elements).forEach(el => {
     const oveDivDataset = (el as HTMLDivElement).dataset;
     const viewerID = el.id;
     const isSnapGeneFile = (new URL(oveDivDataset.href, window.location.origin)).searchParams.get('f').slice(-4) === '.dna';
@@ -49,7 +52,7 @@ export function displayPlasmidViewer(about: DOMStringMap): void {
           'real_name': realName + '.png',
           'content': reader.result,
         };
-        ApiC.post(`${about.type}/${about.id}/${Model.Upload}`, params).then(() => reloadElement('uploadsDiv'));
+        ApiC.post(`${entity.type}/${entity.id}/${Model.Upload}`, params).then(() => reloadElements(['uploadsDiv']));
       };
     }
 
@@ -67,9 +70,7 @@ export function displayPlasmidViewer(about: DOMStringMap): void {
       }
 
       if (parsedData[0].success === false) {
-        const msg = 'Invalid DNA data in file ' + realName;
-        notif({res: false, msg: msg});
-        throw msg;
+        notify.error('invalid-info');
       }
 
       const parsedSequence = parsedData[0].parsedSequence;
@@ -132,7 +133,7 @@ export function displayPlasmidViewer(about: DOMStringMap): void {
         generatePng: true,
         handleFullscreenClose: function(): void { // event could be used as parameter
           editor[viewerID].close();
-          reloadElement('uploadsDiv');
+          reloadElements(['uploadsDiv']);
         },
         onCopy: function(event, copiedSequenceData, editorState): void {
           // the copiedSequenceData is the subset of the sequence that has been copied in the teselagen sequence format

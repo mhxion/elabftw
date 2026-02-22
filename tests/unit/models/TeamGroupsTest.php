@@ -1,4 +1,6 @@
-<?php declare(strict_types=1);
+<?php
+
+declare(strict_types=1);
 /**
  * @author Nicolas CARPi <nico-git@deltablot.email>
  * @copyright 2022 Nicolas CARPi
@@ -10,15 +12,20 @@
 namespace Elabftw\Models;
 
 use Elabftw\Enums\Action;
-use Elabftw\Exceptions\IllegalActionException;
+use Elabftw\Enums\Scope;
+use Elabftw\Exceptions\ImproperActionException;
+use Elabftw\Models\Users\Users;
 
 class TeamGroupsTest extends \PHPUnit\Framework\TestCase
 {
     private TeamGroups $TeamGroups;
 
+    private Users $Users;
+
     protected function setUp(): void
     {
-        $this->TeamGroups = new TeamGroups(new Users(1, 1));
+        $this->Users = new Users(1, 1);
+        $this->TeamGroups = new TeamGroups($this->Users);
     }
 
     public function testCreate(): void
@@ -26,9 +33,9 @@ class TeamGroupsTest extends \PHPUnit\Framework\TestCase
         $this->assertIsInt($this->TeamGroups->postAction(Action::Create, array('name' => 'Group Name')));
     }
 
-    public function testGetPage(): void
+    public function testGetApiPath(): void
     {
-        $this->assertEquals('api/v2/teams/1/teamgroups/', $this->TeamGroups->getPage());
+        $this->assertEquals('api/v2/teams/1/teamgroups/', $this->TeamGroups->getApiPath());
     }
 
     public function testReadOne(): void
@@ -36,6 +43,25 @@ class TeamGroupsTest extends \PHPUnit\Framework\TestCase
         $id = $this->TeamGroups->postAction(Action::Create, array('name' => 'Group Name'));
         $this->TeamGroups->setId($id);
         $this->assertEquals('Group Name', $this->TeamGroups->readOne()['name']);
+    }
+
+    public function testReadNamesFromId(): void
+    {
+        $id = $this->TeamGroups->postAction(Action::Create, array('name' => 'yep'));
+        $id2 = $this->TeamGroups->postAction(Action::Create, array('name' => 'yop'));
+        $res = $this->TeamGroups->readNamesFromIds(array($id, $id2));
+        $this->assertEquals('yep', $res[0]['name']);
+        $this->assertEquals('yop', $res[1]['name']);
+    }
+
+    public function testReadScopedTeamgroups(): void
+    {
+        $this->Users->userData['scope_teamgroups'] = Scope::User->value;
+        $this->assertIsArray($this->TeamGroups->readScopedTeamgroups());
+        $this->Users->userData['scope_teamgroups'] = Scope::Team->value;
+        $this->assertIsArray($this->TeamGroups->readScopedTeamgroups());
+        $this->Users->userData['scope_teamgroups'] = Scope::Everything->value;
+        $this->assertIsArray($this->TeamGroups->readScopedTeamgroups());
     }
 
     public function testUpdate(): void
@@ -51,15 +77,16 @@ class TeamGroupsTest extends \PHPUnit\Framework\TestCase
         $this->assertTrue($this->TeamGroups->isInTeamGroup(1, 1));
         $this->TeamGroups->patch(Action::Update, array('userid' => 1, 'how' => Action::Unreference->value));
         $this->assertFalse($this->TeamGroups->isInTeamGroup(1, 1));
-        $this->expectException(IllegalActionException::class);
+        $this->expectException(ImproperActionException::class);
         $this->TeamGroups->patch(Action::Update, array('userid' => 1, 'how' => 'invalidhow'));
     }
 
     public function testRead(): void
     {
         $this->assertIsArray($this->TeamGroups->readAll());
-        $this->assertIsArray($this->TeamGroups->readAllSimple());
-        $this->assertIsArray($this->TeamGroups->readAllGlobal());
+        $this->assertIsArray($this->TeamGroups->readAllUser());
+        $this->assertIsArray($this->TeamGroups->readAllTeam());
+        $this->assertIsArray($this->TeamGroups->readAllEverything());
     }
 
     public function testDestroy(): void

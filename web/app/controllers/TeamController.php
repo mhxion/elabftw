@@ -1,4 +1,6 @@
-<?php declare(strict_types=1);
+<?php
+
+declare(strict_types=1);
 /**
  * @author Nicolas CARPi <nico-git@deltablot.email>
  * @copyright 2012 Nicolas CARPi
@@ -9,11 +11,9 @@
 
 namespace Elabftw\Elabftw;
 
-use function dirname;
-
 use Elabftw\Enums\EmailTarget;
+use Elabftw\Enums\Messages;
 use Elabftw\Exceptions\DatabaseErrorException;
-use Elabftw\Exceptions\FilesystemErrorException;
 use Elabftw\Exceptions\IllegalActionException;
 use Elabftw\Exceptions\ImproperActionException;
 use Elabftw\Services\Email;
@@ -23,12 +23,14 @@ use Symfony\Component\Mailer\Mailer;
 use Symfony\Component\Mailer\Transport;
 use Symfony\Component\Mime\Address;
 
+use function dirname;
+
 /**
  * Actions from team.php
  */
 require_once dirname(__DIR__) . '/init.inc.php';
 
-$Response = new RedirectResponse('/team.php?tab=4');
+$Response = new RedirectResponse('/team.php?tab=2');
 try {
     // NOT FOR ANON
     if ($App->Session->get('is_anon')) {
@@ -49,6 +51,7 @@ try {
             new Mailer(Transport::fromDsn($App->Config->getDsn())),
             $App->Log,
             $App->Config->configArr['mail_from'],
+            $App->demoMode,
         );
         $replyTo = new Address($App->Users->userData['email'], $App->Users->userData['fullname']);
         $sent = $Email->massEmail(
@@ -57,21 +60,22 @@ try {
             $App->Request->request->getString('subject'),
             $App->Request->request->getString('body'),
             $replyTo,
+            (bool) $App->Config->configArr['email_send_grouped'],
         );
         $App->Session->getFlashBag()->add('ok', sprintf(_('Email sent to %d users'), $sent));
     }
+} catch (IllegalActionException $e) {
+    $App->Log->notice('', array(array('userid' => $App->Session->get('userid')), array('IllegalAction', $e)));
+    $App->Session->getFlashBag()->add('ko', Messages::InsufficientPermissions->toHuman());
 } catch (ImproperActionException $e) {
     // show message to user
     $App->Session->getFlashBag()->add('ko', $e->getMessage());
-} catch (IllegalActionException $e) {
-    $App->Log->notice('', array(array('userid' => $App->Session->get('userid')), array('IllegalAction', $e)));
-    $App->Session->getFlashBag()->add('ko', Tools::error(true));
-} catch (DatabaseErrorException | FilesystemErrorException $e) {
+} catch (DatabaseErrorException $e) {
     $App->Log->error('', array(array('userid' => $App->Session->get('userid')), array('Error', $e)));
     $App->Session->getFlashBag()->add('ko', $e->getMessage());
 } catch (Exception $e) {
     $App->Log->error('', array(array('userid' => $App->Session->get('userid')), array('Exception' => $e)));
-    $App->Session->getFlashBag()->add('ko', Tools::error());
+    $App->Session->getFlashBag()->add('ko', Messages::GenericError->toHuman());
 } finally {
     $Response->send();
 }

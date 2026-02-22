@@ -1,4 +1,5 @@
-<?php declare(strict_types=1);
+<?php
+
 /**
  * @author Nicolas CARPi <nico-git@deltablot.email>
  * @copyright 2012 Nicolas CARPi
@@ -7,40 +8,36 @@
  * @package elabftw
  */
 
+declare(strict_types=1);
+
 namespace Elabftw\Auth;
 
-use Elabftw\Elabftw\AuthResponse;
 use Elabftw\Exceptions\InvalidMfaCodeException;
 use Elabftw\Interfaces\AuthInterface;
-use Elabftw\Models\Users;
+use Elabftw\Interfaces\AuthResponseInterface;
 use Elabftw\Services\MfaHelper;
+use Elabftw\Services\UsersHelper;
+use Override;
 
 /**
- * Multi Factor Auth service
+ * This class is responsible for verifying that the code sent corresponds to the secret from the user
  */
-class Mfa implements AuthInterface
+final class Mfa implements AuthInterface
 {
-    private AuthResponse $AuthResponse;
+    public function __construct(
+        private readonly MfaHelper $MfaHelper,
+        private readonly int $userid,
+        private readonly string $code,
+    ) {}
 
-    public function __construct(private MfaHelper $MfaHelper, private string $code)
+    #[Override]
+    public function tryAuth(): AuthResponseInterface
     {
-        $this->AuthResponse = new AuthResponse();
-    }
-
-    public function tryAuth(): AuthResponse
-    {
-        $Users = new Users($this->MfaHelper->userid);
-
         if (!$this->MfaHelper->verifyCode($this->code)) {
-            throw new InvalidMfaCodeException($this->MfaHelper->userid);
+            throw new InvalidMfaCodeException();
         }
-
-        $this->AuthResponse->hasVerifiedMfa = true;
-        $this->AuthResponse->mfaSecret = $Users->userData['mfa_secret'];
-        $this->AuthResponse->isValidated = (bool) $Users->userData['validated'];
-        $this->AuthResponse->userid = $this->MfaHelper->userid;
-        $this->AuthResponse->setTeams();
-
-        return $this->AuthResponse;
+        return new MfaAuthResponse()
+            ->setAuthenticatedUserid($this->userid)
+            ->setTeams(new UsersHelper($this->userid));
     }
 }

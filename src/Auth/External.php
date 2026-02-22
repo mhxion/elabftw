@@ -1,4 +1,5 @@
-<?php declare(strict_types=1);
+<?php
+
 /**
  * @author Nicolas CARPi <nico-git@deltablot.email>
  * @copyright 2012 Nicolas CARPi
@@ -7,29 +8,28 @@
  * @package elabftw
  */
 
+declare(strict_types=1);
+
 namespace Elabftw\Auth;
 
-use Elabftw\Elabftw\AuthResponse;
 use Elabftw\Exceptions\ImproperActionException;
 use Elabftw\Exceptions\ResourceNotFoundException;
 use Elabftw\Interfaces\AuthInterface;
-use Elabftw\Models\ExistingUser;
-use Elabftw\Models\ValidatedUser;
-use Monolog\Logger;
+use Elabftw\Interfaces\AuthResponseInterface;
+use Elabftw\Models\Users\ExistingUser;
+use Elabftw\Models\Users\ValidatedUser;
+use Elabftw\Services\UsersHelper;
+use Override;
 
 /**
  * Authenticate with server provided values
  */
-class External implements AuthInterface
+final class External implements AuthInterface
 {
-    private AuthResponse $AuthResponse;
+    public function __construct(private array $configArr, private array $serverParams) {}
 
-    public function __construct(private array $configArr, private array $serverParams, private Logger $log)
-    {
-        $this->AuthResponse = new AuthResponse();
-    }
-
-    public function tryAuth(): AuthResponse
+    #[Override]
+    public function tryAuth(): AuthResponseInterface
     {
         $firstname = $this->serverParams[$this->configArr['extauth_firstname']] ?? '?';
         $lastname = $this->serverParams[$this->configArr['extauth_lastname']] ?? '?';
@@ -62,12 +62,9 @@ class External implements AuthInterface
             }
             // CREATE USER (and force validation of user)
             $Users = ValidatedUser::fromExternal($email, $teams, $firstname, $lastname);
-            $this->log->info('New user (' . $email . ') autocreated from external auth');
         }
-        $this->AuthResponse->userid = (int) $Users->userData['userid'];
-        $this->AuthResponse->isValidated = true;
-        $this->AuthResponse->setTeams();
-
-        return $this->AuthResponse;
+        return new AuthResponse()
+            ->setAuthenticatedUserid($Users->userData['userid'])
+            ->setTeams(new UsersHelper($Users->userData['userid']));
     }
 }

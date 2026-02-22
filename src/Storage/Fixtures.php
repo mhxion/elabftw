@@ -1,4 +1,5 @@
-<?php declare(strict_types=1);
+<?php
+
 /**
  * @author Nicolas CARPi <nico-git@deltablot.email>
  * @copyright 2022 Nicolas CARPi
@@ -7,12 +8,14 @@
  * @package elabftw
  */
 
+declare(strict_types=1);
+
 namespace Elabftw\Storage;
 
 /**
  * For fixtures files used in tests
  */
-class Fixtures extends Local
+final class Fixtures extends Local
 {
-    protected const FOLDER = 'tests/_data';
+    protected const string FOLDER = 'tests/_data';
 }

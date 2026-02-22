@@ -1,4 +1,6 @@
-<?php declare(strict_types=1);
+<?php
+
+declare(strict_types=1);
 /**
  * @author Nicolas CARPi <nico-git@deltablot.email>
  * @copyright 2012 Nicolas CARPi
@@ -35,7 +37,7 @@ class UsersHelperTest extends \PHPUnit\Framework\TestCase
 
     public function testGetTeamsFromUserid(): void
     {
-        $expected = array(array('id' => 1, 'name' => 'Alpha', 'usergroup' => 2, 'is_owner' => 0));
+        $expected = array(array('id' => 1, 'name' => 'Alpha', 'is_admin' => 1, 'is_owner' => 0, 'is_archived' => 0));
         $this->assertEquals($expected, $this->UsersHelper->getTeamsFromUserid());
     }
 

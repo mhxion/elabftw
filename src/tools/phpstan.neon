@@ -1,15 +1,18 @@
 parameters:
   level: 7
-  checkMissingIterableValueType: false
+  treatPhpDocTypesAsCertain: false
   ignoreErrors:
-    -
-      message: '#Variable \$App might not be defined.*#'
+    - identifier: argument.named
+    - message: '#Call to method PHPUnit\\Framework\\Assert::.* with .* will always evaluate to true#'
+    - message: '#Call to function is_array\(\) with array will always evaluate to true#'
+    - message: '#Variable \$App might not be defined.*#'
       path: %currentWorkingDirectory%/web
-    -
-      message: '#Variable \$Request might not be defined.*#'
+    - message: '#Variable \$Request might not be defined.*#'
       path: %currentWorkingDirectory%/web
+    - message: '#.*type has no value type specified.*#'
+    - message: '#.*with no value type specified in iterable type array.*#'
   excludePaths:
-    - %currentWorkingDirectory%/src/tools/rector.php
+    - %currentWorkingDirectory%/src/Services/AdvancedSearchQuery/Grammar/Parser.php
 
   paths:
     - %currentWorkingDirectory%/src

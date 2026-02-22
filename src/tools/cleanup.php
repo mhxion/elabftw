@@ -1,4 +1,5 @@
-<?php declare(strict_types=1);
+<?php
+
 /**
  * @author Nicolas CARPi <nico-git@deltablot.email>
  * @copyright 2012 Nicolas CARPi
@@ -7,13 +8,15 @@
  * @package elabftw
  */
 
+declare(strict_types=1);
+
 namespace Elabftw\Services;
 
-use function dirname;
-use Elabftw\Exceptions\DatabaseErrorException;
-use Elabftw\Exceptions\FilesystemErrorException;
+use Exception;
 use League\Flysystem\Filesystem;
 use League\Flysystem\Local\LocalFilesystemAdapter;
+
+use function dirname;
 
 /**
  * This is used to find out if there are untracked files that should have been deleted
@@ -26,6 +29,6 @@ try {
     $UploadsCleaner = new UploadsCleaner(new Filesystem(new LocalFilesystemAdapter($uploadsDir)));
     $deleted = $UploadsCleaner->cleanup();
     printf("Deleted %d files\n", $deleted);
-} catch (FilesystemErrorException | DatabaseErrorException $e) {
+} catch (Exception $e) {
     echo $e->getMessage();
 }

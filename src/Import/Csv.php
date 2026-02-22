@@ -1,4 +1,5 @@
-<?php declare(strict_types=1);
+<?php
+
 /**
  * @author Nicolas CARPi <nico-git@deltablot.email>
  * @copyright 2012, 2022 Nicolas CARPi
@@ -7,133 +8,123 @@
  * @package elabftw
  */
 
+declare(strict_types=1);
+
 namespace Elabftw\Import;
 
-use Elabftw\Elabftw\Tools;
-use Elabftw\Enums\Action;
+use DateTimeImmutable;
+use Elabftw\Enums\BasePermissions;
+use Elabftw\Enums\BodyContentType;
+use Elabftw\Enums\EntityType;
 use Elabftw\Exceptions\ImproperActionException;
-use Elabftw\Models\Experiments;
-use Elabftw\Models\Items;
-use League\Csv\Info as CsvInfo;
-use League\Csv\Reader;
+use Elabftw\Models\AbstractEntity;
+use Elabftw\Models\Users\Users;
+use Psr\Log\LoggerInterface;
+use Symfony\Component\HttpFoundation\File\UploadedFile;
+use Override;
 
 /**
  * Import entries from a csv file.
  */
-class Csv extends AbstractImport
+final class Csv extends AbstractCsv
 {
-    protected array $allowedMimes = array(
-        'application/csv',
-        'application/vnd.ms-excel',
-        'text/plain',
-        'text/csv',
-        'text/tsv',
-    );
+    public function __construct(
+        protected Users $requester,
+        protected UploadedFile $UploadedFile,
+        protected LoggerInterface $logger,
+        protected EntityType $entityType = EntityType::Items,
+        protected ?int $category = null,
+        protected BasePermissions $canreadBase = BasePermissions::Team,
+        protected BasePermissions $canwriteBase = BasePermissions::User,
+        protected string $canread = AbstractEntity::EMPTY_CAN_JSON,
+        protected string $canwrite = AbstractEntity::EMPTY_CAN_JSON,
+    ) {
+        parent::__construct(
+            $requester,
+            $UploadedFile,
+        );
+        // we might have been forced to cast to int a null value, so bring it back to null
+        if ($this->category === 0) {
+            $this->category = null;
+        }
+    }
 
     /**
      * Do the work
      *
      * @throws ImproperActionException
      */
-    public function import(): void
+    #[Override]
+    public function import(): int
     {
-        // we directly read from temporary uploaded file location and do not need to use the cache folder as no extraction is necessary for a .csv
-        $csv = Reader::createFromPath($this->UploadedFile->getPathname(), 'r');
-        // get stats about the most likely delimiter
-        $delimitersCount = CsvInfo::getDelimiterStats($csv, array(',', '|', "\t", ';'), -1);
-        // reverse sort the array by value to get the delimiter with highest probability
-        arsort($delimitersCount, SORT_NUMERIC);
-        // set the delimiter from the first value
-        $csv->setDelimiter((string) key($delimitersCount));
-        $csv->setHeaderOffset(0);
-        $rows = $csv->getRecords();
-
-        // SQL for importing
-        $sql = 'INSERT INTO items(team, title, date, body, userid, category, status, custom_id, canread, canwrite, canbook, elabid, metadata)
-            VALUES(:team, :title, CURDATE(), :body, :userid, :category, :status, :custom_id, :canread, :canwrite, :canbook, :elabid, :metadata)';
-
-        if ($this->Entity instanceof Experiments) {
-            $sql = 'INSERT INTO experiments(team, title, date, body, userid, category, status, custom_id, canread, canwrite, elabid, metadata)
-                VALUES(:team, :title, CURDATE(), :body, :userid, :category, :status, :custom_id, :canread, :canwrite, :elabid, :metadata)';
-        }
-        $req = $this->Db->prepare($sql);
-
-        // now loop the rows and do the import
-        foreach ($rows as $row) {
+        $entity = $this->entityType->toInstance($this->requester);
+        foreach ($this->reader->getRecords() as $row) {
+            // fail hard if no title column can be found, or we end up with a bunch of Untitled entries
             if (empty($row['title'])) {
                 throw new ImproperActionException('Could not find the title column!');
             }
-            $body = $this->getBodyFromRow($row);
-            $status = empty($row['status']) ? null : $row['status'];
-            $customId = empty($row['custom_id']) ? null : $row['custom_id'];
-            $metadata = null;
-            if (isset($row['metadata']) && !empty($row['metadata'])) {
-                $metadata = $row['metadata'];
+            $body = null;
+            if (array_key_exists('body', $row) && !empty($row['body'])) {
+                $body = $row['body'];
             }
-
-            if ($this->Entity instanceof Items) {
-                $req->bindParam(':canbook', $this->canread);
+            $date = empty($row['date']) ? null : new DateTimeImmutable($row['date']);
+            $category = $this->category;
+            // use the category_title of the row only if we didn't specify a category
+            if (array_key_exists('category_title', $row) && $this->category === null) {
+                $category = $this->getCategoryId($this->entityType, $row['category_title']);
             }
-            $req->bindParam(':team', $this->Users->userData['team']);
-            $req->bindParam(':title', $row['title']);
-            $req->bindParam(':body', $body);
-            $req->bindParam(':userid', $this->Users->userData['userid']);
-            $req->bindParam(':category', $this->targetNumber);
-            $req->bindParam(':status', $status);
-            $req->bindParam(':custom_id', $customId);
-            $req->bindParam(':canread', $this->canread);
-            $req->bindParam(':canwrite', $this->canwrite);
-            $req->bindValue(':elabid', Tools::generateElabid());
-            $req->bindParam(':metadata', $metadata);
-            $this->Db->execute($req);
-            $newItemId = $this->Db->lastInsertId();
-
-            $this->Entity->setId($newItemId);
-
-            // insert tags from the tags column
-            if (isset($row['tags'])) {
-                $this->insertTags($row['tags']);
+            $status = empty($row['status_title']) ? null : $this->getStatusId($this->entityType, $row['status_title']);
+            $customId = empty($row['custom_id']) ? null : (int) $row['custom_id'];
+            $metadata = empty($row['metadata']) ? null : (string) $row['metadata'];
+            if ($metadata === null) {
+                $metadata = $this->collectMetadata($row);
             }
+            $tags = empty($row['tags']) ? array() : explode(self::TAGS_SEPARATOR, $row['tags']);
+            $canreadBase = empty($row['canread_base']) ? $this->canreadBase : $row['canread_base'];
+            $canwriteBase = empty($row['canwrite_base']) ? $this->canwriteBase : $row['canwrite_base'];
+            $canread = empty($row['canread']) ? $this->canread : $row['canread'];
+            $canwrite = empty($row['canwrite']) ? $this->canwrite : $row['canwrite'];
+
+            $entity->create(
+                title: $row['title'],
+                body: $body,
+                canreadBase: $canreadBase,
+                canwriteBase: $canwriteBase,
+                canread: $canread,
+                canwrite: $canwrite,
+                contentType: BodyContentType::from((int) ($row['contentType'] ?? BodyContentType::Html->value)),
+                date: $date,
+                tags: $tags,
+                category: $category,
+                status: $status,
+                customId: $customId,
+                metadata: $metadata,
+                rating: (int) ($row['rating'] ?? 0),
+            );
 
             $this->inserted++;
         }
+        return $this->getInserted();
     }
 
-    /**
-     * Generate a body from a row. Add column name and content after that.
-     *
-     * @param array<string, null|string> $row row from the csv
-     */
-    private function getBodyFromRow(array $row): string
+    #[Override]
+    protected function getProcessedColumns(): array
     {
-        // get rid of the title
-        unset($row['title']);
-        // and the tags
-        unset($row['tags']);
-        // and the metadata
-        unset($row['metadata']);
-        // deal with the rest of the columns
-        $body = '';
-        foreach ($row as $subheader => $content) {
-            $contentEscaped = htmlspecialchars($content ??= '');
-            // translate urls into links
-            if (filter_var($content, FILTER_VALIDATE_URL)) {
-                $contentEscaped = sprintf('<a href="%1$s">%1$s</a>', $contentEscaped);
-            }
-            $body .= sprintf('<p>%s:%s</p>', htmlspecialchars($subheader), $contentEscaped);
-        }
-
-        return $body;
-    }
-
-    private function insertTags(string $tags): void
-    {
-        $tagsArr = explode(self::TAGS_SEPARATOR, $tags);
-        foreach ($tagsArr as $tag) {
-            // maybe it's empty for this row
-            if ($tag) {
-                $this->Entity->Tags->postAction(Action::Create, array('tag' => $tag));
-            }
-        }
+        return array(
+            'body',
+            'canread',
+            'canwrite',
+            'category',
+            'category_title',
+            'custom_id',
+            'content_type',
+            'date',
+            'metadata',
+            'rating',
+            'status',
+            'status_title',
+            'tags',
+            'title',
+        );
     }
 }

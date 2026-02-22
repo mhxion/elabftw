@@ -1,11 +1,12 @@
-describe('Metadata', () => {
+describe('Metadata Extra fields', () => {
   beforeEach(() => {
     cy.login();
-    cy.enableCodeCoverage(Cypress.currentTest.titlePath.join(' '));
   });
 
-  it('Show metadata', () => {
-    cy.visit('/metadata.php');
-    cy.get('body').should('contain', 'Nothing to show with this id');
+  it('Create and edit metadata in an experiment', () => {
+    cy.createEntity();
+    cy.addTextMetadataField('Raw data URL');
+    cy.removeMetadataField();
+    cy.addUserMetadataField('Owner', 'Titi');
   });
 });

@@ -37,15 +37,15 @@
       <div class='form-group mx-auto col-md-4'>
         {# TEAM #}
         <div class='row'>
-          <label for='team'>{{ 'Team'|trans }}</label>
-          {% if App.Config.configArr.debug -%}
-            <!-- [html-validate-disable-block element-permitted-content: suppress error from select picker: div child of button] -->
+          {% if App.devMode -%}
+            <!-- [html-validate-disable-block prefer-native-element: suppress errors from tom-select] -->
           {%- endif %}
-          <select name='team' class='form-control selectpicker' id='team' required data-show-subtext='true' data-live-search='true'>
+          <label for='team'>{{ 'Team'|trans }}</label>
+          <select name='team' class='form-control' id='team' required autocomplete='off' placeholder='{{ 'Select a team'|trans }}' aria-label='{{ 'Team'|trans }}'>
             <option value='' selected disabled>{{ 'Select a team'|trans }}</option>
             {# on this page, only show the visible teams #}
-            {% for team in teamsArr|filter(v => v.visible == 1) %}
-              <option value='{{ team.id }}'>{{ team.name }}</option>
+            {% for team in teamsArr %}
+              <option value='{{ team.id }}' {{ App.Request.query.get('team') == team.id ? 'selected' }}>{{ team.name }}</option>
             {% endfor %}
           </select>
         </div>
@@ -68,7 +68,7 @@
           <div class='input-group'>
             <input name='password' type='password' class='form-control' minlength='{{ App.Config.configArr.min_password_length }}' title='{{ 'Minimum password length: %d.'|trans|format(App.Config.configArr.min_password_length) }} {{ passwordInputHelp|e('html_attr') }}' pattern='{{ passwordInputPattern|e('html_attr') }}' id='password' autocomplete='new-password' required />
             <div class='input-group-append'>
-              <span class='btn btn-light input-border' tabindex='-1' data-action='toggle-password' data-target='password'><i class='fas fa-eye' aria-hidden='true'></i></span>
+              <button type='button' class='btn btn-ghost' data-action='toggle-password' title='{{ 'Show password'|trans }}' aria-label='{{ 'Show password'|trans }}'><i class='fas fa-eye' aria-hidden='true'></i></button>
             </div>
           </div>
         </div>

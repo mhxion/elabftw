@@ -1,4 +1,6 @@
-<?php declare(strict_types=1);
+<?php
+
+declare(strict_types=1);
 /**
  * @author Nicolas CARPi <nico-git@deltablot.email>
  * @author Marcel Bolten <github@marcelbolten.de>
@@ -16,7 +18,6 @@ class MetadataTest extends \PHPUnit\Framework\TestCase
     {
         $metadata = new Metadata(null);
         $this->assertEmpty($metadata->getExtraFields());
-        $this->assertTrue($metadata->getDisplayMainText());
     }
 
     public function testGetRaw(): void
@@ -31,22 +32,23 @@ class MetadataTest extends \PHPUnit\Framework\TestCase
         $this->assertIsArray($metadata->getExtraFields());
     }
 
-    public function testGetDisplayMainText(): void
-    {
-        $metadata = new Metadata('{"elabftw": {"display_main_text": false}}');
-        $this->assertFalse($metadata->getDisplayMainText());
-    }
-
     public function testGetGroups(): void
     {
         $metadata = new Metadata('{"elabftw": {"extra_fields_groups": [ { "id": 1, "name": "my group"} ] }}');
+        // count default group as well cf. src/classes/Metadata.php -> getGroups()
+        $this->assertEquals(2, count($metadata->getGroups()));
+        $this->assertEquals('-1', $metadata->getGroups()[0]['id'], 'The default group id should be -1.');
+        $this->assertEquals('Default group', $metadata->getGroups()[0]['name'], "First group name should be 'Default group'.");
+        // now with missing id (#5369)
+        $metadata = new Metadata('{"elabftw": {"extra_fields_groups": [ { "iiid": 1, "name": "my group"}, { "name": "group2"}, { "id": 1, "name": "group3"} ] }}');
         $this->assertEquals(1, count($metadata->getGroups()));
     }
 
     public function testGetGroupedExtraFields(): void
     {
         $metadata = new Metadata('{"elabftw": {"extra_fields_groups": [ { "id": 1, "name": "my group"} ] }, "extra_fields":{"foo":{"group_id": 1,"value":"bar"}, "nogroup": {"value": ""}}}');
-        $this->assertEquals(2, count($metadata->getGroupedExtraFields()));
+        // count default group as well from getGroups().
+        $this->assertEquals(3, count($metadata->getGroupedExtraFields()));
     }
 
     public function testBlankValueOnDuplicate(): void

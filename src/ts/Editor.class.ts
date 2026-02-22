@@ -5,30 +5,32 @@
  * @license AGPL-3.0
  * @package elabftw
  */
-import { insertParamAndReload } from './misc';
 import $ from 'jquery';
 import tinymce from 'tinymce/tinymce';
+import { getTinymceBaseConfig } from './tinymce';
 import { marked } from 'marked';
 import { MathJaxObject } from 'mathjax-full/js/components/startup';
+import { Entity, Target } from './interfaces';
+import { ApiC } from './api';
 declare const MathJax: MathJaxObject;
 
 interface EditorInterface {
   type: string;
   typeAsInt: number;
-  init(): void;
+  init(page: string): void;
   getContent(): string;
   setContent(content: string): void;
-  switch(): string;
+  switch(entity: Entity): Promise<Response>;
   replaceContent(content: string): void;
 }
 
 class Editor {
   type: string;
   typeAsInt: number;
-  switch(): string {
-    const target = this.type === 'tiny' ? 'md' : 'tiny';
-    insertParamAndReload('editor', target);
-    return target;
+  switch(entity: Entity): Promise<Response> {
+    const params = {};
+    params[Target.ContentType] = this.type === 'tiny' ? 2 : 1;
+    return ApiC.patch(`${entity.type}/${entity.id}`, params);
   }
 }
 
@@ -38,8 +40,8 @@ class TinyEditor extends Editor implements EditorInterface {
     this.type = 'tiny';
     this.typeAsInt = 1;
   }
-  init(): void {
-    return;
+  init(page: string = 'edit'): void {
+    tinymce.init(getTinymceBaseConfig(page));
   }
   getContent(): string {
     return tinymce.activeEditor.getContent();
@@ -89,8 +91,8 @@ export class MdEditor extends Editor implements EditorInterface {
 }
 
 export function getEditor(): EditorInterface {
-  if (document.getElementById('iHazEditor')) {
-    return document.getElementById('iHazEditor').dataset.editor === 'md' ? new MdEditor() : new TinyEditor();
+  if (document.getElementById('entityBodyEditorDiv')) {
+    return document.getElementById('entityBodyEditorDiv').dataset.contentType === '2' ? new MdEditor() : new TinyEditor();
   }
   return new TinyEditor();
 }
