@@ -25,9 +25,8 @@ const mode = new URLSearchParams(window.location.search).get('mode');
 if (mode === 'edit') {
   // remove exclusive edit mode when leaving the page
   window.onbeforeunload = function() {
-    ApiC.notifOnSaved = false;
     ApiC.keepalive = true;
-    ApiC.patch(`${entity.type}/${entity.id}`, {action: Action.RemoveExclusiveEditMode});
+    ApiC.patch(`${entity.type}/${entity.id}`, { notifOnSaved: 0, action: Action.RemoveExclusiveEditMode });
   };
   // Which editor are we using? md or tiny
   const editor = getEditor();
@@ -130,6 +129,8 @@ if (mode === 'edit') {
       content = '<img src="' + url + '" />';
     }
     editor.setContent(content);
+    // save to prevent destroy/archive actions on the uploads before they're considered part of the body
+    updateEntityBody();
   });
   on('insert-video-in-body', (el: HTMLElement) => {
     // link to the video file
@@ -181,6 +182,7 @@ if (mode === 'edit') {
       const formData = new FormData(formElement);
       // prevent the browser from redirecting us
       formData.set('extraParam', 'noRedirect');
+      formData.append('action', Action.Replace);
       fetch(`api/v2/${entity.type}/${entity.id}/${Model.Upload}/${el.dataset.uploadid}`, {
         method: 'POST',
         body: formData,

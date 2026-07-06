@@ -34,7 +34,8 @@ import {
   TomSelect,
   updateEntityBody,
   updateCatStat,
-  makeMalleableColumnsGreatAgain,
+  makeMalleableColumnsGreatAgain, rebuildTomSelectOptions,
+  mountRors,
 } from './misc';
 import i18next from './i18n';
 import { Metadata } from './Metadata.class';
@@ -125,6 +126,7 @@ TableSortingC.init();
 (new Tab()).init(document.querySelector('.tabbed-menu'));
 
 makeSortableGreatAgain();
+mountRors();
 
 const userPrefs = document.getElementById('user-prefs').dataset;
 if (userPrefs.scDisabled === '0') {
@@ -161,7 +163,9 @@ btn.style.opacity = '0';
 // will not be shown for small screens, only large ones
 btn.classList.add('d-none', 'd-xl-inline', 'd-lg-inline');
 // the button is an up arrow
-btn.innerHTML = '<i class="fas fa-arrow-up"></i>';
+const icon = document.createElement('i');
+icon.classList.add('fas', 'fa-arrow-up');
+btn.replaceChildren(icon);
 // give it an id so we can remove it easily
 btn.id = 'backToTopButton';
 btn.setAttribute('aria-label', 'Back to top');
@@ -247,6 +251,108 @@ document.querySelectorAll('[data-dismiss-key]').forEach((msg: HTMLElement) => {
 
 makeMalleableColumnsGreatAgain();
 
+// selector for all {permission}_select (canread, canwrite, canbook)
+const permissionSelects = document.querySelectorAll<HTMLSelectElement>(
+  '[id$="_select_teamgroups"], [id$="_select_teams"], [id$="_select_users"]',
+);
+
+function initPermissionsTomSelects() {
+  if (permissionSelects.length === 0) return;
+  permissionSelects.forEach((select) => {
+    const tsSelect = select as HTMLSelectElement & { tomselect?: TomSelect };
+    // avoid re-init of tomselect if already exists
+    if (tsSelect.tomselect) return;
+    const config = {
+      plugins: {
+        no_backspace_delete: {},
+        remove_button: {},
+      },
+      // display many things or users will be confused what they search is not displayed right away
+      maxOptions: 2222,
+      onInitialize() { setSelectedItemsDivVisibility(this); },
+      onItemAdd() {
+        this.setTextboxValue('');
+        setSelectedItemsDivVisibility(this);
+      },
+      onItemRemove() { setSelectedItemsDivVisibility(this); },
+    };
+    const wrapper = select.closest('.ts-wrapper');
+    config['dropdownParent'] = wrapper;
+    config['controlInput'] = wrapper?.querySelector('input');
+    // for users, we return a formatted response with id - user (email)
+    if (select.id.endsWith('_select_users')) {
+      config['load'] = (query: string, callback) => {
+        if (!query.length) return callback();
+        fetchUsers(query).then(callback).catch(() => callback());
+      };
+    }
+    new TomSelect(select, config);
+  });
+}
+
+initPermissionsTomSelects();
+
+// make the div holding selected items disappear when empty and vice versa.
+function setSelectedItemsDivVisibility(instance) {
+  instance.control.style.display = instance.items.length ? 'flex' : 'none';
+}
+
+// fetch users and return in an id - username (email) format
+async function fetchUsers(query: string) {
+  const users = await ApiC.getJson(`/users/search?q=${encodeURIComponent(query)}`);
+  return users.map((u) => ({
+    value: `user:${u.userid}`,
+    text: `${u.fullname} (${u.email})`,
+  }));
+}
+
+on('team-scope-change', async (el: HTMLElement) => {
+  const scope = Number(el.dataset.value);
+  const identifier = el.dataset.identifier;
+  if (!identifier) return;
+  // custom scope button for team select
+  const menu = el.parentElement;
+  if (menu) {
+    menu.querySelectorAll('.dropdown-item').forEach((item) => {
+      item.classList.remove('active');
+      item.querySelector('i')?.classList.remove('color-white');
+    });
+  }
+  el.classList.add('active');
+  el.querySelector('i')?.classList.add('color-white');
+
+  const btn = el.closest('.btn-group')?.querySelector('button.dropdown-toggle');
+  if (btn) {
+    // clear existing content
+    btn.replaceChildren();
+    const icon = document.createElement('i');
+    icon.classList.add('fas', 'fa-fw', scope === 1 ? 'fa-user' : 'fa-globe', 'mx-1');
+    const text = document.createTextNode(scope === 1 ? i18next.t('my-teams') : i18next.t('all-teams'));
+    btn.append(text, icon);
+  }
+  let teams;
+
+  if (scope === 1) {
+    const user = await ApiC.getJson(`${Model.User}/me`);
+    teams = user.teams;
+  } else {
+    const allTeams = await ApiC.getJson('teams');
+    teams = allTeams.filter((t) => t.visible !== 0);
+  }
+  const select = document.querySelector(`#${identifier}_select_teams`) as HTMLSelectElement;
+  if (!select) return;
+  rebuildTomSelectOptions(select, {
+    options: teams.map(team => ({
+      value: `team:${team.id}`,
+      text: team.name,
+    })),
+  });
+});
+
+document.addEventListener('scope-changed', () => {
+  permissionSelects.forEach(select => rebuildTomSelectOptions(select));
+});
+
 // tom-select for team selection on login and register page, and idp selection
 ['init_team_select', 'team', 'team_selection_select', 'idp_login_select'].forEach(id =>{
   if (document.getElementById(id)) {
@@ -325,9 +431,33 @@ if (entity.type !== EntityType.Other && (pageMode === 'view' || pageMode === 'ed
     return optionsCache[endpoint];
   };
 
+  // Ensure the select opens with the currently displayed category/status selected
+  // for both category & status malleables
+  const selectCurrentCatStatOption = (original: HTMLElement, _: Event, input: HTMLInputElement | HTMLSelectElement): boolean => {
+    const select = input as HTMLSelectElement;
+    const currentId = original.dataset.id?.trim();
+    if (currentId && Array.from(select.options).some(option => option.value === currentId)) {
+      select.value = currentId;
+      return true;
+    }
+    const currentText = original.textContent?.trim() ?? '';
+    for (let i = 0; i < select.options.length; i++) {
+      const option = select.options.item(i);
+      if ((option?.textContent?.trim() ?? '') === currentText) {
+        option.selected = true;
+        select.value = option.value;
+        break;
+      }
+    }
+    return true;
+  };
+
+  const getCurrentTeamCatStatOptions = async (endpoint: string): Promise<Status[]> =>
+    ((await getCatStatArr(endpoint)) as Status[])
+      .filter((catStat: Status) => catStat.is_current_team === 1);
+
   // MALLEABLE STATUS
   new Malle({
-    // use the after hook to add the colored circle before text
     after: (elem: HTMLElement, _: Event, value: string) => {
       const icon = document.createElement('i');
       icon.classList.add('fas', 'fa-circle', 'mr-1');
@@ -336,18 +466,7 @@ if (entity.type !== EntityType.Other && (pageMode === 'view' || pageMode === 'ed
       elem.insertBefore(icon, elem.firstChild);
       return true;
     },
-    // use the onEdit hook to set the correct selected option (because of the circle icon interference)
-    onEdit: async (original: HTMLElement, _: Event, input: HTMLInputElement|HTMLSelectElement) => {
-      // the options can be a promise, so we need to use await or its length will be 0 here
-      const opts = (input as HTMLSelectElement).options;
-      for (let i = 0; i < opts.length; i++) {
-        if (opts.item(i).textContent === original.textContent.trim()) {
-          opts.item(i).selected = true;
-          break;
-        }
-      }
-      return true;
-    },
+    onEdit: selectCurrentCatStatOption,
     inputClasses: ['form-control', 'ml-2'],
     formClasses: ['form-inline'],
     fun: (value: string, original: HTMLElement) => updateCatStat(original.dataset.target, entity, value).then(color => {
@@ -357,9 +476,7 @@ if (entity.type !== EntityType.Other && (pageMode === 'view' || pageMode === 'ed
     inputType: InputType.Select,
     selectOptionsValueKey: 'id',
     selectOptionsTextKey: 'title',
-    selectOptions: async () =>
-      ((await getCatStatArr(statusEndpoint)) as Status[])
-        .filter((status: Status) => status.is_current_team === 1),
+    selectOptions: () => getCurrentTeamCatStatOptions(statusEndpoint),
     listenOn: '.malleableStatus',
     returnedValueIsTrustedHtml: false,
     tooltip: i18next.t('click-to-edit'),
@@ -367,23 +484,20 @@ if (entity.type !== EntityType.Other && (pageMode === 'view' || pageMode === 'ed
 
   // MALLEABLE CATEGORY
   new Malle({
-    // use the after hook to change the background color of the new element
     after: (elem: HTMLElement, _: Event, value: string) => {
-      // we get back a string with the id separated from color with a |
       const splitValue = value.split('|');
       elem.dataset.id = splitValue[0];
       elem.style.setProperty('--bg', `#${splitValue[1]}`);
       return true;
     },
+    onEdit: selectCurrentCatStatOption,
     inputClasses: ['form-control'],
     formClasses: ['form-inline'],
     fun: (value: string, original: HTMLElement) => updateCatStat(original.dataset.target, entity, value),
     inputType: InputType.Select,
     selectOptionsValueKey: 'id',
     selectOptionsTextKey: 'title',
-    selectOptions: async () =>
-      ((await getCatStatArr(categoryEndpoint)) as Status[])
-        .filter((cat: Status) => cat.is_current_team === 1),
+    selectOptions: () => getCurrentTeamCatStatOptions(categoryEndpoint),
     listenOn: '.malleableCategory',
     returnedValueIsTrustedHtml: false,
     tooltip: i18next.t('click-to-edit'),
@@ -488,7 +602,7 @@ on('destroy-favtags', (el: HTMLElement) => {
   }
 });
 
-on('insert-param-and-reload', (el: HTMLElement) => {
+on('insert-param-and-reload', async (el: HTMLElement) => {
   const params = new URLSearchParams(document.location.search.slice(1));
   const target = el.dataset.target;
   const value = (el as HTMLInputElement).value;
@@ -499,7 +613,7 @@ on('insert-param-and-reload', (el: HTMLElement) => {
     params.delete(target);
   }
   window.history.replaceState({}, '', `?${params.toString()}`);
-  handleReloads(el.dataset.reload);
+  await handleReloads(el.dataset.reload);
 });
 
 // used on displayMessage divs: we save the fact that it was closed
@@ -546,60 +660,58 @@ on('toggle-pin', (el: HTMLElement) => {
   });
 });
 
-on('transfer-ownership', async () => {
+/*
+ * Enable/disable dependent container based on its toggle
+ * example usage:
+ * <input type='checkbox' data-action='toggle-dependent' data-target-toggle='divToDisable' />
+ * <div id='divToDisable'><input type='text' value='abcd'></div>
+ */
+on('toggle-dependent', (el: HTMLInputElement) => {
+  const targetId = el.dataset.targetToggle;
+  if (!targetId) return;
+  const container = document.getElementById(targetId);
+  if (!container) return;
+  const disabled = !el.checked;
+  container.style.opacity = disabled ? '0.5' : '';
+  container
+    .querySelectorAll<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>('input, select, textarea')
+    .forEach(input => {
+      input.disabled = disabled;
+    });
+});
+
+on('save-booking-settings', async (_, e:Event): Promise<void | Response> => {
+  e.preventDefault();
+  const form = document.getElementById('editBookingParamsForm') as HTMLFormElement;
+  const params = collectForm(form);
+  await ApiC.patch(`items/${form.dataset.itemId}`, params);
+  reloadElements(['topToolbar', 'permissionsDiv']);
+  $('#bookingParamsModal').modal('hide');
+});
+
+on('transfer-ownership', async (_, e:Event) => {
+  e.preventDefault();
   const params = collectForm(document.getElementById('ownershipTransferForm'));
-  const userid = parseInt(params['targetUserId'].split(' ')[0] ?? '', 10);
-  ApiC.notifOnSaved = false;
-  await ApiC.patch(`${entity.type}/${entity.id}`, { action: Action.UpdateOwner, userid });
+  if (!params['targetUserId'] || !params['targetTeamId']) {
+    return;
+  }
+  const userid = Number.parseInt(String(params['targetUserId']).split(' ')[0], 10);
+  const team = Number.parseInt(String(params['targetTeamId']), 10);
+  await ApiC.patch(`${entity.type}/${entity.id}`, { notifOnSaved: 0, action: Action.UpdateOwner, userid, team });
   sessionStorage.setItem('flash_ownershipTransfer', i18next.t('ownership-transfer'));
-  window.location.reload();
+  const path = window.location.pathname.toLowerCase();
+  if (path.includes('experiment')) {
+    window.location.href = 'experiments.php';
+  } else if (path.includes('database') || path.includes('resource')) {
+    window.location.href = 'database.php';
+  } else {
+    window.location.href = 'dashboard.php';
+  }
 });
 
 on(Action.Restore, () => {
   ApiC.patch(`${entity.type}/${entity.id}`, { action: Action.Restore })
     .then(() => window.location.href = `?mode=view&id=${entity.id}`);
-});
-
-on('add-user-to-permissions', (el: HTMLElement) => {
-  // collect userid + name + email from input
-  const addUserPermissionsInput = (document.getElementById(`${el.dataset.identifier}_select_users`) as HTMLInputElement);
-  const userid = parseInt(addUserPermissionsInput.value, 10);
-  if (isNaN(userid)) {
-    notify.error('add-user-error');
-    return;
-  }
-  const userName = addUserPermissionsInput.value.split(' - ')[1];
-
-  // create a new li element in the list of existing users, so it is collected at Save action
-  const li = document.createElement('li');
-  li.classList.add('list-group-item');
-  li.dataset.id = String(userid);
-
-  // eye or pencil icon
-  const rwIcon = document.createElement('i');
-  rwIcon.classList.add('fas');
-  const iconClass = el.dataset.rw === 'canread' ? 'eye' : 'pencil-alt';
-  rwIcon.classList.add(`fa-${iconClass}`);
-
-  // delete icon
-  const deleteSpan = document.createElement('span');
-  deleteSpan.dataset.action = 'remove-parent';
-  deleteSpan.classList.add('hover-danger');
-  const xIcon = document.createElement('i');
-  xIcon.classList.add('fas');
-  xIcon.classList.add('fa-xmark');
-  deleteSpan.insertAdjacentElement('afterbegin', xIcon);
-
-  // construct the li element with all its content
-  li.insertAdjacentElement('afterbegin', rwIcon);
-  li.insertAdjacentText('beforeend', ' ' + userName + ' ');
-  li.insertAdjacentElement('beforeend', deleteSpan);
-
-  // and insert it into the list
-  document.getElementById(`${el.dataset.identifier}_list_users`).appendChild(li);
-
-  // clear input
-  addUserPermissionsInput.value = '';
 });
 
 on('reload-page', () => location.reload());
@@ -613,15 +725,7 @@ on('clear-form', (el: HTMLElement) => {
 
 on('save-permissions', (el: HTMLElement) => {
   const params = {};
-  // collect existing users listed in ul->li, and store them in a string[] with user:<userid>
-  const existingUsers = Array.from(document.getElementById(`${el.dataset.identifier}_list_users`).children)
-    .map(u => `user:${(u as HTMLElement).dataset.id}`);
-
-  params[el.dataset.rw] = permissionsToJson(
-    ($('#' + el.dataset.identifier + '_select_teams').val() as string[])
-      .concat($('#' + el.dataset.identifier + '_select_teamgroups').val() as string[])
-      .concat(existingUsers),
-  );
+  params[el.dataset.rw] = collectPermissionsFromModal(el.dataset.identifier);
   const baseSelect = getSafeElementById(`${el.dataset.identifier}_select_base`) as HTMLSelectElement;
   params[baseSelect.name] = baseSelect.value;
   // if we're editing the default read/write permissions for experiments, this data attribute will be set
@@ -638,6 +742,27 @@ on('save-permissions', (el: HTMLElement) => {
   } else {
     ApiC.patch(`${entity.type}/${entity.id}`, params).then(() => reloadElements([el.dataset.identifier + 'Div']));
   }
+});
+
+function collectPermissionsFromModal(identifier: string): string {
+  const teams = ($('#' + identifier + '_select_teams').val() as string[] | null) ?? [];
+  const teamgroups = ($('#' + identifier + '_select_teamgroups').val() as string[] | null) ?? [];
+  const users = ($('#' + identifier + '_select_users').val() as string[] | null) ?? [];
+  return permissionsToJson(
+    teams.concat(teamgroups).concat(users),
+  );
+}
+
+// change both read & write permissions in one go
+on('save-permissions-both', (el: HTMLElement) => {
+  if (!confirm(i18next.t('entity-apply-both-permissions-warning'))) {
+    return;
+  }
+  const permissions = collectPermissionsFromModal(el.dataset.identifier);
+  const baseSelect = getSafeElementById(`${el.dataset.identifier}_select_base`) as HTMLSelectElement;
+  const params = {canread: permissions, canread_base: baseSelect.value, canwrite: permissions, canwrite_base: baseSelect.value};
+  ApiC.patch(`${entity.type}/${entity.id}`, params)
+    .then(() => reloadElements(['canreadDiv', 'canwriteDiv']));
 });
 
 on('select-lang', () => {
@@ -718,25 +843,145 @@ on('add-storage-children', (el: HTMLElement) => {
     });
   });
 });
-on('create-container', (el: HTMLElement) => {
+// CONTAINER DISTRIBUTION across multiple storage locations
+// Each storage location in the "Add container" modal has a -/number/+ stepper.
+// The user distributes a target number of containers (#containerMultiplierInput) across
+// the locations; the steppers can never sum above the target, and the "Store containers"
+// button is only enabled once they sum exactly to it.
+
+/**
+ * Read a non-negative integer from a number input. Blank, negative or non-integer
+ * values (e.g. a manually typed 1.9) collapse to 0 so a fractional entry can never
+ * feed the distribution math or submit a different count than what is shown.
+ */
+const intFromInput = (el: HTMLInputElement | null): number => {
+  const value = el?.valueAsNumber ?? NaN;
+  return Number.isInteger(value) && value >= 0 ? value : 0;
+};
+
+/** All the per-location quantity inputs currently rendered in the modal. */
+const containerStepperInputs = (): HTMLInputElement[] =>
+  Array.from(document.querySelectorAll('input[data-action="container-qty-input"]'));
+
+/** The target total number of containers to distribute. */
+const containerTarget = (): number =>
+  intFromInput(document.getElementById('containerMultiplierInput') as HTMLInputElement | null);
+
+/** The number of containers currently assigned across all locations. */
+const containerAssigned = (): number =>
+  containerStepperInputs().reduce((sum, input) => sum + intFromInput(input), 0);
+
+/** Update the assigned/target counter and enable submit only at an exact match. */
+function refreshContainerDistribution(): void {
+  const target = containerTarget();
+  const assigned = containerAssigned();
+  const assignedEl = document.getElementById('containerAssignedCount');
+  const targetEl = document.getElementById('containerTargetCount');
+  if (assignedEl) assignedEl.textContent = String(assigned);
+  if (targetEl) targetEl.textContent = String(target);
+  const submitBtn = document.getElementById('storeContainersBtn') as HTMLButtonElement | null;
+  if (submitBtn) submitBtn.disabled = target === 0 || assigned !== target;
+}
+
+/**
+ * Sum of every stepper except the one passed in (identity match, robust whether or
+ * not the input's own value has already been updated by the browser).
+ */
+const otherSteppersTotal = (except: HTMLInputElement): number =>
+  containerStepperInputs()
+    .filter(input => input !== except)
+    .reduce((sum, input) => sum + intFromInput(input), 0);
+
+/** Set a stepper to a value, clamped so the total assigned can never exceed the target. */
+function setStepperValue(input: HTMLInputElement, value: number): void {
+  const max = Math.max(0, containerTarget() - otherSteppersTotal(input));
+  input.value = String(Math.min(Math.max(0, value), max));
+  refreshContainerDistribution();
+}
+
+/** Clamp every stepper down when the target total is reduced below what is already assigned. */
+function reclampAllSteppers(): void {
+  const target = containerTarget();
+  let running = 0;
+  containerStepperInputs().forEach(input => {
+    let value = intFromInput(input);
+    if (running + value > target) {
+      value = Math.max(0, target - running);
+    }
+    input.value = String(value);
+    running += value;
+  });
+  refreshContainerDistribution();
+}
+
+/** Resolve the quantity input that belongs to a clicked +/- button. */
+const stepperFor = (el: HTMLElement): HTMLInputElement | null =>
+  document.querySelector(`input[data-action="container-qty-input"][data-storage-id="${el.dataset.storageId}"]`);
+
+on('container-qty-plus', (el: HTMLElement) => {
+  const input = stepperFor(el);
+  if (input) setStepperValue(input, intFromInput(input) + 1);
+});
+on('container-qty-minus', (el: HTMLElement) => {
+  const input = stepperFor(el);
+  if (input) setStepperValue(input, intFromInput(input) - 1);
+});
+
+on('store-containers-distributed', () => {
+  const submitBtn = document.getElementById('storeContainersBtn') as HTMLButtonElement | null;
+  // guard against double submit: a disabled button means a batch is already in flight
+  if (submitBtn?.disabled) {
+    return;
+  }
   const qty_stored = (document.getElementById('containerQtyStoredInput') as HTMLInputElement).value;
   const qty_unit = (document.getElementById('containerQtyUnitSelect') as HTMLSelectElement).value;
-  let multiplier = parseInt((document.getElementById('containerMultiplierInput') as HTMLInputElement).value, 10);
-  if (isNaN(multiplier) || multiplier <= 0) {
-    multiplier = 1;
+  const postCalls = containerStepperInputs().flatMap(input => {
+    const count = intFromInput(input);
+    return Array.from({ length: count }, () =>
+      ApiC.post(`${entity.type}/${entity.id}/containers/${input.dataset.storageId}`, {
+        qty_stored: qty_stored,
+        qty_unit: qty_unit,
+      }),
+    );
+  });
+  if (postCalls.length === 0) {
+    return;
   }
-
-  const postCalls = Array.from({ length: multiplier }, () =>
-    ApiC.post(`${entity.type}/${entity.id}/containers/${el.dataset.id}`, {
-      qty_stored: qty_stored,
-      qty_unit: qty_unit,
-    }),
-  );
+  // lock the button while the batch runs so a second click cannot create a duplicate distribution
+  if (submitBtn) submitBtn.disabled = true;
   // Execute all POST calls and reload elements after all are resolved
   Promise.all(postCalls)
-    .then(() => reloadElements(['storageDivContent']))
-    .catch((error) => notify.error(error));
+    .then(() => {
+      reloadElements(['storageDivContent']);
+      $('#storageModal').modal('hide');
+    })
+    .catch((error) => notify.error(error))
+    .finally(() => {
+      if (submitBtn) submitBtn.disabled = false;
+    });
 });
+
+// the steppers' number inputs and the target total fire 'input', not 'click', so they are
+// handled with a delegated listener rather than via on()
+const storageModalEl = document.getElementById('storageModal');
+if (storageModalEl) {
+  document.getElementById('container')?.addEventListener('input', (event: Event) => {
+    const target = event.target as HTMLElement | null;
+    const stepper = target?.closest('input[data-action="container-qty-input"]') as HTMLInputElement | null;
+    if (stepper) {
+      setStepperValue(stepper, intFromInput(stepper));
+      return;
+    }
+    if (target?.id === 'containerMultiplierInput') {
+      reclampAllSteppers();
+    }
+  });
+  // reset all steppers each time the modal opens so a reopened modal starts clean
+  $('#storageModal').on('show.bs.modal', () => {
+    containerStepperInputs().forEach(input => { input.value = '0'; });
+    refreshContainerDistribution();
+  });
+}
 
 on('delete-storage-root', (el: HTMLElement) => ApiC.delete(`storage_units/${el.dataset.id}`).then(() => reloadElements(['storageDiv'])));
 
@@ -744,6 +989,67 @@ on('destroy-container', (el: HTMLElement) => {
   if (confirm(i18next.t('generic-delete-warning'))) {
     ApiC.delete(`${entity.type}/${entity.id}/containers/${el.dataset.id}`).then(() => reloadElements(['storageDivContent']));
   }
+});
+
+on('move-container', (el: HTMLElement) => {
+  const modal = document.getElementById('moveStorageModal');
+  if (!modal) return;
+  modal.dataset.containerId = el.dataset.id;
+  $('#moveStorageModal').modal('show');
+});
+
+on('move-storage', (el: HTMLElement) => {
+  const modal = document.getElementById('moveStorageUnitModal');
+  if (!modal) return;
+  const storageId = el.dataset.id;
+  modal.dataset.storageId = storageId;
+  // disable self + descendants as valid targets
+  modal.querySelectorAll('button[data-action="move-storage-target"]').forEach((btn: HTMLButtonElement) => {
+    btn.disabled = false;
+  });
+  const selfDetails = modal.querySelector(`details[data-id="${storageId}"]`) as HTMLDetailsElement | null;
+  const selfRoot = modal.querySelector(`.box[data-root-id="${storageId}"]`);
+  const scope = selfDetails ?? selfRoot;
+  if (scope) {
+    scope.querySelectorAll('button[data-action="move-storage-target"]').forEach((btn: HTMLButtonElement) => {
+      btn.disabled = true;
+    });
+    // also disable the root-level "Move here" if this unit is itself a root
+    if (selfRoot) {
+      const rootBtn = selfRoot.querySelector(':scope > div > div > button[data-action="move-storage-target"]') as HTMLButtonElement | null;
+      if (rootBtn) rootBtn.disabled = true;
+    }
+  }
+  $('#moveStorageUnitModal').modal('show');
+});
+
+on('move-storage-target', (el: HTMLElement) => {
+  const modal = document.getElementById('moveStorageUnitModal');
+  const storageId = modal?.dataset.storageId;
+  const newParentId = el.dataset.id;
+  if (!storageId || !newParentId) return;
+  ApiC.patch(`storage_units/${storageId}`, { parent_id: parseInt(newParentId, 10) })
+    .then(() => reloadElements(['storageDiv']))
+    .catch((error) => notify.error(error));
+});
+
+on('move-storage-to-root', () => {
+  const modal = document.getElementById('moveStorageUnitModal');
+  const storageId = modal?.dataset.storageId;
+  if (!storageId) return;
+  ApiC.patch(`storage_units/${storageId}`, { parent_id: null })
+    .then(() => reloadElements(['storageDiv']))
+    .catch((error) => notify.error(error));
+});
+
+on('move-container-target', (el: HTMLElement) => {
+  const modal = document.getElementById('moveStorageModal');
+  const containerId = modal?.dataset.containerId;
+  const newStorageId = el.dataset.id;
+  if (!containerId || !newStorageId) return;
+  ApiC.patch(`${entity.type}/${entity.id}/containers/${containerId}`, { storage_id: parseInt(newStorageId, 10) })
+    .then(() => reloadElements(['storageDivContent']))
+    .catch((error) => notify.error(error));
 });
 
 on('destroy-storage', (el: HTMLElement) => {
@@ -759,10 +1065,29 @@ on('replace-with-next', (el: HTMLElement) => {
   // hide clicked element
   el.toggleAttribute('hidden');
 });
+// TODO this requires jquery for now. Not in BS5.
 on('toggle-modal', (el: HTMLElement) => {
-  // TODO this requires jquery for now. Not in BS5.
-  $('#' + el.dataset.target).modal('show');
+  const modalSelector = `#${el.dataset.target}`;
+  showModalAndFocusFirstInput(modalSelector);
 });
+
+// autofocus the first input of a modal
+function focusFirstTextInputOnShown(modalSelector: string) {
+  const modal = document.querySelector<HTMLElement>(modalSelector);
+  if (!modal) return;
+  $(modal).one('shown.bs.modal', () => {
+    modal.querySelector<HTMLElement>(
+      'input:is([type="text"], [type="search"], [type="email"], [type="url"], [type="tel"], [type="password"], [type="number"]):not([disabled]):not([readonly]),' +
+      'input:not([type]):not([disabled]):not([readonly]),' +
+      'textarea:not([disabled]):not([readonly])',
+    )?.focus();
+  });
+}
+
+export function showModalAndFocusFirstInput(modalSelector: string) {
+  focusFirstTextInputOnShown(modalSelector);
+  $(modalSelector).modal('show');
+}
 
 on('update-entity-body', (el: HTMLElement) => {
   updateEntityBody().then(() => {
@@ -782,8 +1107,7 @@ on('search-pubchem', (el: HTMLElement) => {
   const elOldHTML = mkSpin(el);
   const resultTableDiv = document.getElementById('pubChemSearchResultTableDiv');
   // we will handle errors differently here
-  ApiC.notifOnError = false;
-  ApiC.getJson(`compounds?search_pubchem_${el.dataset.from}=${inputEl.value}`).then(json => {
+  ApiC.getJson(`compounds?search_pubchem_${el.dataset.from}=${inputEl.value}`, { notifOnError: 0 }).then(json => {
     const compounds = Array.isArray(json) ? json : [json];
     const table = document.createElement('table');
     table.classList.add('table');
@@ -843,7 +1167,6 @@ on('search-pubchem', (el: HTMLElement) => {
     console.error(err);
     resultTableDiv.innerText = err;
   }).finally(() => {
-    ApiC.notifOnError = true;
     mkSpinStop(el, elOldHTML);
   });
 });
@@ -991,6 +1314,8 @@ on('create-entity', async (el: HTMLElement, event: Event) => {
   const params = collectForm(form);
   if (el.dataset.tplid) {
     params['template'] = parseInt(el.dataset.tplid, 10);
+  } else if (el.dataset.entityid) {
+    params['entity'] = parseInt(el.dataset.entityid, 10);
   }
   // look for any tag present in the url, we will create the entry with these tags
   const urlParams = new URLSearchParams(document.location.search);
@@ -1031,15 +1356,12 @@ on('toggle-anonymous-access', () => {
 });
 
 on('reload-color', (el: HTMLElement) => {
-  el.classList.add('flash');
-  setTimeout(() => {
-    el.classList.remove('flash');
-  }, 100);
   (el.nextElementSibling as HTMLInputElement).value = getRandomColor();
 });
 
 // CREATE CATEGORY OR STATUS
-on('create-catstat', (el: HTMLElement) => {
+on('create-catstat', (el: HTMLElement, e: Event) => {
+  e.preventDefault();
   const modalId = 'createCatStatModal';
   const form = document.getElementById(modalId);
   try {
@@ -1216,16 +1538,17 @@ on('query', (el: HTMLElement) => {
   window.location.href = url.href;
 });
 
-on('notify-surrounding-bookers', (el: HTMLElement, event: Event) => {
+on(Action.EmailBookers, (el: HTMLElement, event: Event) => {
   event.preventDefault();
   const form = document.getElementById('notifySurroundingBookersForm') as HTMLFormElement;
   const params = collectForm(form);
-  params['action'] = Action.Notif;
+  params['action'] = Action.EmailBookers;
+  params['entity_id'] = entity.id;
   const button = (el as HTMLButtonElement);
   const buttonText = button.innerText;
   button.disabled = true;
   button.innerText = i18next.t('please-wait');
-  ApiC.post(`${entity.type}/${entity.id}`, params).then(() => {
+  ApiC.post('instance', params).then(() => {
     form.reset();
     $('#sendBookingsEmailModal').modal('hide');
     button.innerText = buttonText;
@@ -1245,7 +1568,7 @@ on('delete-compounds', (el: HTMLElement) => {
   document.dispatchEvent(new CustomEvent('dataReload'));
 });
 
-on('scope-change', (el: HTMLElement) => {
+on('scope-change', async (el: HTMLElement) => {
   // only set it in query if we want to, which prevents an issue on dashboard where value was taken from query param "scope"
   if (el.dataset.setQueryParam === '1') {
     const params = new URLSearchParams(document.location.search);
@@ -1254,9 +1577,9 @@ on('scope-change', (el: HTMLElement) => {
   }
   const userParams = {};
   userParams[el.dataset.target] = el.dataset.value;
-  ApiC.patch('users/me', userParams).then(() => {
-    handleReloads(el.dataset.reload);
-  });
+  await ApiC.patch('users/me', userParams);
+  await handleReloads(el.dataset.reload);
+  document.dispatchEvent(new Event('scope-changed'));
 });
 
 /**

@@ -62,6 +62,7 @@ import '../js/tinymce-langs/sk_SK.js';
 import '../js/tinymce-langs/sl_SI.js';
 import '../js/tinymce-langs/uz_UZ.js';
 import '../js/tinymce-langs/zh_CN.js';
+import '../js/tinymce-langs/zh_TW.js';
 import '../js/tinymce-plugins/mention/plugin.js';
 import { EntityType, Model } from './interfaces';
 import { reloadElements, escapeExtendedQuery, updateEntityBody, getNewIdFromPostRequest } from './misc';
@@ -210,6 +211,9 @@ export function getTinymceBaseConfig(page: string): object {
   }
 
   const isDark = document.documentElement.classList.contains('dark-mode');
+  const templateEndpoint = (entity.type === EntityType.Experiment || entity.type === EntityType.Template)
+    ? EntityType.Template
+    : EntityType.ItemType;
 
   return {
     selector: '.mceditable',
@@ -222,7 +226,9 @@ export function getTinymceBaseConfig(page: string): object {
     // location of the skin directory
     skin_url: isDark ? '/assets/tinymce_skins_dark' : '/assets/tinymce_skins',
     skin: isDark ? 'oxide-dark' : 'oxide',
-    content_css: isDark ? ['/assets/tinymce_skins/content/dark/content.min.css', '/assets/tinymce_content.min.css'] : ['/assets/tinymce_content.min.css'],
+    content_css: isDark ? ['/assets/tinymce_content_dark.min.css', '/assets/tinymce_content.min.css'] : ['/assets/tinymce_content.min.css'],
+    // Prevent inserted images from overflowing the editor. See #5050.
+    content_style: 'img { max-width: 100%; height: auto; }',
     emoticons_database_url: 'assets/tinymce_emojis.js',
     // remove the "Upgrade" button
     promotion: false,
@@ -245,7 +251,7 @@ export function getTinymceBaseConfig(page: string): object {
     // use undocumented callback function to asynchronously get the templates
     // see https://github.com/tinymce/tinymce/issues/5637#issuecomment-624982699
     templates: (callback): void => {
-      ApiC.getJson(`${EntityType.Template}`).then(json => {
+      ApiC.getJson(templateEndpoint).then(json => {
         const res = [];
         json.forEach(tpl => {
           res.push({'title': tpl.title, 'description': '', 'content': tpl.body});
@@ -278,6 +284,7 @@ export function getTinymceBaseConfig(page: string): object {
       {text: 'Makefile', value: 'makefile'},
       {text: 'Matlab', value: 'matlab'},
       {text: 'Perl', value: 'perl'},
+      {text: 'PHP', value: 'php'},
       {text: 'Python', value: 'python'},
       {text: 'R', value: 'r'},
       {text: 'Ruby', value: 'ruby'},

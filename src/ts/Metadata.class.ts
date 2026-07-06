@@ -90,15 +90,20 @@ export class Metadata {
       // collect all the selected options, and the value will be an array
       value = [...el.selectedOptions].map(option => option.value);
     }
-    // special case for Experiment/Resource/User link
+    // special case for Experiment/Resource/User/Compound link
     if ([ExtraFieldInputType.Experiments.valueOf(), ExtraFieldInputType.Items.valueOf(), ExtraFieldInputType.Users.valueOf(), ExtraFieldInputType.Compounds.valueOf()].includes(el.dataset.target)) {
-      value = parseInt(value.split(' ')[0], 10);
-      if (isNaN(value)) {
-        return false;
-      }
-      // also create a link automatically for experiments, resources and compounds.
-      if ([ExtraFieldInputType.Experiments.valueOf(), ExtraFieldInputType.Items.valueOf(), ExtraFieldInputType.Compounds.valueOf()].includes(el.dataset.target)) {
-        ApiC.post(`${this.entity.type}/${this.entity.id}/${el.dataset.target}_links/${value}`).then(() => reloadElements(['linksDiv', 'linksExpDiv']));
+      const rawValue = value.trim();
+      if (rawValue === '') {
+        value = '';
+      } else {
+        value = parseInt(rawValue.split(' ')[0], 10);
+        if (isNaN(value)) {
+          return false;
+        }
+        // also create a link automatically for experiments, resources and compounds.
+        if ([ExtraFieldInputType.Experiments.valueOf(), ExtraFieldInputType.Items.valueOf(), ExtraFieldInputType.Compounds.valueOf()].includes(el.dataset.target)) {
+          ApiC.post(`${this.entity.type}/${this.entity.id}/${el.dataset.target}_links/${value}`).then(() => reloadElements(['linksDiv', 'linksExpDiv']));
+        }
       }
     }
     const params = {};
@@ -679,11 +684,12 @@ export class Metadata {
             // add a button to set the position of the field
             const handle = document.createElement('div');
             handle.dataset.action = 'metadata-reposition-field';
-            handle.classList.add('btn', 'p-0', 'mr-3', 'border-0', 'lh-normal');
+            handle.classList.add('btn', 'mr-2');
             const handleIconSpan = document.createElement('span');
             handleIconSpan.classList.add('draggable', 'sortableHandle');
             const handleIcon = document.createElement('i');
             handleIcon.classList.add('fas', 'fa-grip-vertical');
+            handleIcon.setAttribute('aria-label', i18next.t('sort'));
             handleIconSpan.appendChild(handleIcon);
             handle.appendChild(handleIconSpan);
 
@@ -691,7 +697,7 @@ export class Metadata {
             const editBtn = document.createElement('button');
             editBtn.dataset.action = 'metadata-edit-field';
             editBtn.dataset.target = 'fieldBuilderModal';
-            editBtn.classList.add('btn', 'p-2', 'mr-2', 'hl-hover-gray', 'border-0', 'lh-normal');
+            editBtn.classList.add('btn', 'btn-transparent', 'mr-2');
             editBtn.type = 'button';
             editBtn.setAttribute('aria-label', i18next.t('edit'));
             editBtn.setAttribute('title', i18next.t('edit'));
@@ -701,7 +707,7 @@ export class Metadata {
 
             // add a button to toggle read-only
             const readonlyBtn = document.createElement('button');
-            readonlyBtn.classList.add('btn', 'p-2', 'mr-2', 'hl-hover-gray', 'border-0', 'lh-normal');
+            readonlyBtn.classList.add('btn', 'btn-transparent', 'mr-2');
             readonlyBtn.type = 'button';
             readonlyBtn.setAttribute('aria-label', i18next.t('readonly'));
             readonlyBtn.setAttribute('title', i18next.t('readonly'));
@@ -722,7 +728,7 @@ export class Metadata {
             // add a button to delete the field
             const deleteBtn = document.createElement('button');
             deleteBtn.dataset.action = 'metadata-rm-field';
-            deleteBtn.classList.add('btn', 'p-2', 'hl-hover-gray', 'border-0', 'lh-normal');
+            deleteBtn.classList.add('btn', 'btn-transparent');
             deleteBtn.type = 'button';
             deleteBtn.setAttribute('aria-label', i18next.t('remove'));
             deleteBtn.setAttribute('title', i18next.t('remove'));

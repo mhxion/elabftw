@@ -28,11 +28,9 @@ use Elabftw\Interfaces\ControllerInterface;
 use Elabftw\Models\AbstractEntity;
 use Elabftw\Models\Config;
 use Elabftw\Models\ExperimentsStatus;
-use Elabftw\Models\ExtraFieldsKeys;
 use Elabftw\Models\FavTags;
 use Elabftw\Models\ItemsStatus;
 use Elabftw\Models\ItemsTypes;
-use Elabftw\Models\ProcurementRequests;
 use Elabftw\Models\RequestActions;
 use Elabftw\Models\StorageUnits;
 use Elabftw\Models\TeamGroups;
@@ -45,6 +43,8 @@ use Symfony\Component\HttpFoundation\RedirectResponse;
 use Symfony\Component\HttpFoundation\Response;
 use Override;
 use Symfony\Component\HttpFoundation\InputBag;
+
+use function sprintf;
 
 /**
  * For displaying an entity in show, view or edit mode
@@ -107,12 +107,6 @@ abstract class AbstractEntityController implements ControllerInterface
     {
         // used to get all tags for top page tag filter
         $TeamTags = new TeamTags($this->App->Users, $this->App->Users->userData['team']);
-        $ExtraFieldsKeys = new ExtraFieldsKeys($this->App->Users, '', -1);
-
-        // only show public to anon
-        if ($this->App->Session->get('is_anon')) {
-            $this->Entity->isAnon = true;
-        }
 
         // must be before the call to readShow
         if (($this->App->Users->userData['always_show_owned'] ?? null) === 1) {
@@ -131,13 +125,6 @@ abstract class AbstractEntityController implements ControllerInterface
             limit: $this->App->Users->userData['limit_nb'],
             skipOrderPinned: $skipOrderPinned,
         );
-        $itemsArr = $this->Entity->readShow($DisplayParams);
-
-        // get tags separately
-        $tagsArr = array();
-        if (!empty($itemsArr)) {
-            $tagsArr = $this->Entity->getTags($itemsArr);
-        }
 
         // store the query parameters in the Session
         $this->App->Session->set('lastquery', $this->App->Request->getQueryString());
@@ -155,12 +142,9 @@ abstract class AbstractEntityController implements ControllerInterface
             'categoryArr' => $this->categoryArr,
             'statusArr' => $this->statusArr,
             'favTagsArr' => $favTagsArr,
-            'itemsArr' => $itemsArr,
             'pageTitle' => $this->getPageTitle(),
-            'metakeyArrForSelect' => array_column($ExtraFieldsKeys->readAll(), 'extra_fields_key'),
             'requestActionsArr' => $UserRequestActions->readAllFull(),
             'scopedTeamgroupsArr' => $this->scopedTeamgroupsArr,
-            'tagsArr' => $tagsArr,
             // get all the tags for the top search bar
             'tagsArrForSelect' => $TeamTags->readAll(),
             'usersArr' => $this->App->Users->readAllFromTeam(),
@@ -175,33 +159,34 @@ abstract class AbstractEntityController implements ControllerInterface
 
     abstract protected function getPageTitle(): string;
 
+    // empty by default because only for items
+    protected function getEntityProcurementRequestsArr(): array
+    {
+        return array();
+    }
+
     /**
      * View mode (one item displayed)
      */
     protected function view(): Response
     {
         $RequestActions = new RequestActions($this->App->Users, $this->Entity);
-        $ProcurementRequests = new ProcurementRequests($this->App->Teams);
-
         // the mode parameter is for the uploads tpl
         $renderArr = array(
             'categoryArr' => $this->categoryArr,
             'classificationArr' => $this->classificationArr,
             'currencyArr' => $this->currencyArr,
             'Entity' => $this->Entity,
-            'entityProcurementRequestsArr' => $ProcurementRequests->readActiveForEntity($this->Entity->id ?? 0),
+            'entityProcurementRequestsArr' => $this->getEntityProcurementRequestsArr(),
             'entityRequestActionsArr' => $RequestActions->readAllFull(),
             'pageTitle' => $this->getPageTitle(),
             'mode' => 'view',
             'hideTitle' => true,
             'teamsArr' => $this->App->Teams->readAllVisible(),
             'scopedTeamgroupsArr' => $this->scopedTeamgroupsArr,
-            'timestamperFullname' => $this->Entity->getTimestamperFullname(),
-            'lockerFullname' => $this->Entity->getLockerFullname(),
             'meaningArr' => $this->meaningArr,
             'requestableActionArr' => $this->requestableActionArr,
             'storageUnitsArr' => new StorageUnits($this->App->Users, Config::getConfig()->configArr['inventory_require_edit_rights'] === '1')->readAllRecursive(),
-            'surroundingBookers' => $this->Entity->getSurroundingBookers(),
             'usersArr' => $this->App->Users->readAllActiveFromTeam(),
             'visibilityArr' => $this->visibilityArr,
         );
@@ -234,9 +219,7 @@ abstract class AbstractEntityController implements ControllerInterface
         $this->Entity->ExclusiveEditMode->activate();
 
         $TeamTags = new TeamTags($this->App->Users);
-
         $RequestActions = new RequestActions($this->App->Users, $this->Entity);
-        $ProcurementRequests = new ProcurementRequests($this->App->Teams);
 
         $Metadata = new Metadata($this->Entity->entityData['metadata']);
         $baseQueryParams = new BaseQueryParams($this->App->Request->query);
@@ -250,7 +233,7 @@ abstract class AbstractEntityController implements ControllerInterface
             'classificationArr' => $this->classificationArr,
             'currencyArr' => $this->currencyArr,
             'Entity' => $this->Entity,
-            'entityProcurementRequestsArr' => $ProcurementRequests->readActiveForEntity($this->Entity->id ?? 0),
+            'entityProcurementRequestsArr' => $this->getEntityProcurementRequestsArr(),
             'entityRequestActionsArr' => $RequestActions->readAllFull(),
             'hideTitle' => true,
             'metadataGroups' => $Metadata->getGroups(),
@@ -263,7 +246,6 @@ abstract class AbstractEntityController implements ControllerInterface
             'meaningArr' => $this->meaningArr,
             'requestableActionArr' => $this->requestableActionArr,
             'storageUnitsArr' => new StorageUnits($this->App->Users, Config::getConfig()->configArr['inventory_require_edit_rights'] === '1')->readAllRecursive(),
-            'surroundingBookers' => $this->Entity->getSurroundingBookers(),
             'templatesArr' => $Templates->readAllSimple($DisplayParamsTemplates),
             'itemsTemplatesArr' => $ItemsTypes->readAllSimple($DisplayParamsItemsTypes),
             'usersArr' => $this->App->Users->readAllActiveFromTeam(),

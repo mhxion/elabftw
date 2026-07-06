@@ -22,8 +22,11 @@ use Elabftw\Exceptions\ImproperActionException;
 use Elabftw\Exceptions\UnauthorizedException;
 use Elabftw\Models\Users\Users;
 use Elabftw\Params\DisplayParams;
-use Elabftw\Services\ApiParamsValidator;
+use Elabftw\Params\Guard;
 use Override;
+
+use function array_map;
+use function array_merge;
 
 /**
  * Process a single request targeting multiple entities
@@ -47,8 +50,8 @@ final class Batch extends AbstractRest
             default => null,
         };
         if ($action === Action::UpdateOwner) {
-            ApiParamsValidator::ensureRequiredKeysPresent(array('userid', 'team'), $reqBody);
-            ApiParamsValidator::ensurePositiveInts(array('userid', 'team'), $reqBody);
+            Guard::ensureRequiredKeysPresent(array('userid', 'team'), $reqBody);
+            Guard::ensurePositiveInts(array('userid', 'team'), $reqBody);
         }
         if ($reqBody['items_tags']) {
             $this->processTags($reqBody['items_tags'], new Items($this->requester), $action, $reqBody);
@@ -80,6 +83,14 @@ final class Batch extends AbstractRest
             $model = new Items($this->requester);
             $this->processEntities($reqBody['users_resources'], $model, FilterableColumn::Owner, $action, $reqBody, $state);
         }
+        if ($reqBody['users_experiments_templates']) {
+            $model = new Templates($this->requester);
+            $this->processEntities($reqBody['users_experiments_templates'], $model, FilterableColumn::Owner, $action, $reqBody, $state);
+        }
+        if ($reqBody['users_resources_templates']) {
+            $model = new ItemsTypes($this->requester);
+            $this->processEntities($reqBody['users_resources_templates'], $model, FilterableColumn::Owner, $action, $reqBody, $state);
+        }
         return $this->processed;
     }
 
@@ -89,13 +100,13 @@ final class Batch extends AbstractRest
         return 'api/v2/batch/';
     }
 
-    private function processEntities(array $idArr, AbstractConcreteEntity $model, FilterableColumn $column, Action $action, array $params, ?State $state = null): void
+    private function processEntities(array $idArr, AbstractConcreteEntity|AbstractTemplateEntity $model, FilterableColumn $column, Action $action, array $params, ?State $state = null): void
     {
         $entries = $this->getEntriesByIds($idArr, $model, $column, $state);
         $this->loopOverEntries($entries, $model, $action, $params);
     }
 
-    private function processTags(array $tags, AbstractConcreteEntity $model, Action $action, array $params): void
+    private function processTags(array $tags, AbstractConcreteEntity|AbstractTemplateEntity $model, Action $action, array $params): void
     {
         $Tags2Entity = new Tags2Entity($this->requester, $model->entityType);
         $targetIds = $Tags2Entity->getEntitiesIdFromTags('id', $tags, Scope::Team);
@@ -104,7 +115,7 @@ final class Batch extends AbstractRest
         $this->loopOverEntries($tagEntries, $model, $action, $params);
     }
 
-    private function getEntriesByIds(array $idArr, AbstractConcreteEntity $model, FilterableColumn $column, ?State $state): array
+    private function getEntriesByIds(array $idArr, AbstractConcreteEntity|AbstractTemplateEntity $model, FilterableColumn $column, ?State $state): array
     {
         $allEntries = array();
         foreach ($idArr as $id) {
@@ -122,7 +133,7 @@ final class Batch extends AbstractRest
         return $allEntries;
     }
 
-    private function loopOverEntries(array $entries, AbstractConcreteEntity $model, Action $action, array $params): void
+    private function loopOverEntries(array $entries, AbstractConcreteEntity|AbstractTemplateEntity $model, Action $action, array $params): void
     {
         foreach ($entries as $entry) {
             try {

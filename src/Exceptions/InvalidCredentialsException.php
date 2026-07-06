@@ -12,13 +12,21 @@ declare(strict_types=1);
 
 namespace Elabftw\Exceptions;
 
+use Exception;
 use Override;
+
+use function _;
 
 /**
  * Throw this if the auth is not good
  */
 final class InvalidCredentialsException extends UnauthorizedException
 {
+    public function __construct(int $userid = 0, ?Exception $previous = null)
+    {
+        parent::__construct($this->getErrorMessage(), $userid, $previous);
+    }
+
     #[Override]
     protected function getErrorMessage(): string
     {

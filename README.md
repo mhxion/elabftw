@@ -10,7 +10,7 @@
 
 [![CircleCI](https://circleci.com/gh/elabftw/elabftw/tree/master.svg?style=svg)](https://circleci.com/gh/elabftw/elabftw/tree/master)
 
-[![Code Coverage](https://codecov.io/gh/elabftw/elabftw/branch/hypernext/graph/badge.svg?token=SHSZuaxt17)](https://codecov.io/gh/elabftw/elabftw)
+[![Code Coverage](https://codecov.io/gh/elabftw/elabftw/branch/master/graph/badge.svg?token=SHSZuaxt17)](https://codecov.io/gh/elabftw/elabftw)
 [![CII Best Practices](https://bestpractices.coreinfrastructure.org/projects/2766/badge)](https://bestpractices.coreinfrastructure.org/projects/2766)
 [![Join the chat at https://gitter.im/elabftw/elabftw](https://badges.gitter.im/elabftw/elabftw.svg)](https://gitter.im/elabftw/elabftw?utm_source=badge&utm_medium=badge&utm_campaign=pr-badge&utm_content=badge)
 [![License](https://img.shields.io/badge/license-AGPL-blue.svg)](https://www.gnu.org/licenses/agpl-3.0.en.html)
@@ -23,7 +23,7 @@
 
 # Description
 
-**eLabFTW** is an electronic lab notebook manager for research teams.
+**eLabFTW®** is an electronic lab notebook manager for research teams.
 
 It lets you store and organize your research experiments easily. It also features a database where any kind of objects (such as antibodies, plasmids, cell lines, boxes, _etc_.) can be stored.
 It is accessed _via_ the browser. Several research teams can be hosted on the same installation. This means **eLabFTW** can be installed at the institute level and host all team members at the same place. This is what is done at in many research institutions around the globe. It is also a great solution for companies looking into improving the traceability and reproducibility of their processes.
@@ -67,6 +67,12 @@ The documentation explains everything:
 # Security
 
 See [SECURITY.md](./SECURITY.md).
+
+# Trademark
+
+eLabFTW® is a registered trademark of Deltablot SASU in several jurisdictions.
+
+The eLabFTW source code is licensed under the GNU AGPL. Use of the eLabFTW name, logo, and related branding is governed by [TRADEMARK.md](./TRADEMARK.md).
 
 # Support
 
@@ -135,9 +141,12 @@ This project is backed by [Deltablot](https://www.deltablot.com) company.
 These projects were created by users of eLabFTW, check them out if interested!
 
 * [elAPI](https://github.com/uhd-urz/elAPI/): a powerful, extensible API client for eLabFTW developed at the University Computing Centre of University of Heidelberg
+* [elAPI Plugins](https://github.com/sfb1638/elAPI_Plugins): a desktop application for bulk importing and exporting resources and experiments, part of the INF Project of CRC 1638 at the Heidelberg University Biochemistry Center (BZH)
 * [pyelabdata](https://github.com/FAU-PHYSIK-EP/pyelabdata): provides functions for simple one-line access to data stored in eLabFTW via Python
 * [elabftw-teamupload](https://github.com/HeFDI-DE/elabftw-teamupload/): Synchronize teamgroups and teams with users from Excel
 * [Reporting Dashboard](https://git.rwth-aachen.de/eln-rwth/reporting-scripts-public): Collection of scripts to create a reporting dashabord for eLabFTW SysAdmins
+* [elab2arc](https://github.com/nfdi4plants/elab2arc/): Convert eLabFTW experiments to into structured ARCs
+* [elab-sample-tracking](https://github.com/wanghao-github/elab-sample-tracking): A lightweight Flask-based web application for tracking sample provenance and collaboration history in eLabFTW.
 
 ### Deprecated projects using retired api v1
 * [din14970/elabftwqrprint](https://github.com/din14970/elabftwqrprint): python library to print QR codes from database objects

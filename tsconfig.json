@@ -1,9 +1,11 @@
 {
   "compilerOptions": {
+    "target": "es2022",
     "baseUrl": ".",
     "module": "NodeNext",
     "esModuleInterop": true,
     "moduleResolution": "NodeNext",
+    "jsx": "react-jsx",
     "strict": false,
     "removeComments": true,
     "preserveConstEnums": true,
@@ -11,6 +13,8 @@
     "lib": ["es2022", "es2022.intl", "dom"]
   },
   "include": [
-    "src/ts/**/*"
+    "src/**/*.ts",
+    "src/**/*.d.ts",
+    "src/**/*.svelte"
   ]
 }

@@ -11,7 +11,6 @@ declare(strict_types=1);
 
 namespace Elabftw\Models;
 
-use DateTimeImmutable;
 use Elabftw\Enums\Action;
 use Elabftw\Enums\BasePermissions;
 use Elabftw\Enums\FileFromString;
@@ -26,6 +25,9 @@ use Elabftw\Services\Check;
 use Elabftw\Traits\TestsUtilsTrait;
 
 use function date;
+use function array_column;
+use function json_decode;
+use function json_encode;
 
 class ItemsTest extends \PHPUnit\Framework\TestCase
 {
@@ -68,11 +70,11 @@ class ItemsTest extends \PHPUnit\Framework\TestCase
         // add a file too
         $uploadTitle = 'osef.json';
         $ItemsTypes->Uploads->createFromString(FileFromString::Json, $uploadTitle, '[1, 2]');
-        $new = $this->Items->createFromTemplate($templateId);
+        $new = $this->Items->postAction(Action::Create, array('template' => $templateId));
         $Items = new Items($user, $new);
         $this->assertSame($title, $Items->entityData['title']);
         $this->assertSame($body, $Items->entityData['body']);
-        $this->assertEqualsCanonicalizing($tags, array_column($Items->Tags->readAll(), 'tag'));
+        $this->assertEqualsCanonicalizing($tags, array_column(new Tags($Items)->readAll(), 'tag'));
         $this->assertSame($categoryId, $Items->entityData['category']);
         $this->assertSame($statusId, $Items->entityData['status']);
         $this->assertCount(1, $Items->entityData['uploads']);
@@ -194,7 +196,7 @@ class ItemsTest extends \PHPUnit\Framework\TestCase
             'canwrite_target_base' => $canwriteTarget->value,
         ));
         // now create an item from that template
-        $newId = $this->Items->createFromTemplate($itemTemplate);
+        $newId = $this->Items->postAction(Action::Create, array('template' => $itemTemplate));
         $this->assertIsInt($newId);
         $this->Items->setId($newId);
         $this->assertEquals($canreadTarget->value, $this->Items->entityData['canread_base']);
@@ -214,19 +216,111 @@ class ItemsTest extends \PHPUnit\Framework\TestCase
         $this->assertFalse((bool) $item['locked']);
     }
 
-    public function testGetSurroundingBookers(): void
+    // test metadata merge preserves existing fields on import
+    public function testMetadataMergePreservesExistingFieldSchema(): void
     {
-        $item = $this->getFreshBookableItem(2);
-        $Scheduler = new Scheduler($item);
-        $start = new DateTimeImmutable('+3 hour');
-        $end = new DateTimeImmutable('+6 hour');
-        $Scheduler->postAction(Action::Create, array('start' => $start->format('c'), 'end' => $end->format('c'), 'title' => 'Mail event'));
-        $result = $item->getSurroundingBookers();
-        $this->assertCount(1, $result);
+        $new = $this->Items->create();
+        $this->Items->setId($new);
 
-        // now with an unbookable item
-        $item = $this->getFreshItem(2);
-        $this->assertEmpty($item->getSurroundingBookers());
+        $baseMetadata = json_encode(array(
+            'extra_fields' => array(
+                'weight' => array(
+                    'type' => 'number',
+                    'value' => '0',
+                    'units' => array('g'),
+                    'unit' => 'g',
+                ),
+                'certified' => array(
+                    'type' => 'checkbox',
+                    'value' => '',
+                ),
+                'choice' => array(
+                    'type' => 'select',
+                    'value' => 'A',
+                    'options' => array('A', 'B'),
+                ),
+                'person in charge' => array(
+                    'type' => 'users',
+                    'value' => '',
+                    'description' => 'Select the person responsible.',
+                ),
+                'website' => array(
+                    'type' => 'url',
+                    'value' => '',
+                ),
+            ),
+        ), JSON_THROW_ON_ERROR);
+
+        $incomingMetadata = json_encode(array(
+            'extra_fields' => array(
+                'weight' => array(
+                    'type' => 'text',
+                    'value' => '12,5',
+                ),
+                'certified' => array(
+                    'type' => 'text',
+                    'value' => 'X',
+                ),
+                'choice' => array(
+                    'type' => 'text',
+                    'value' => 'C',
+                ),
+                'person in charge' => array(
+                    'type' => 'text',
+                    'value' => '42',
+                ),
+                'website' => array(
+                    'type' => 'text',
+                    'value' => 'https://example.org',
+                ),
+                'new checkbox' => array(
+                    'type' => 'checkbox',
+                    'value' => 'oui',
+                ),
+                'new text' => array(
+                    'type' => 'text',
+                    'value' => 'hello',
+                ),
+            ),
+        ), JSON_THROW_ON_ERROR);
+
+        // have the base Metadata on the item
+        $this->Items->patch(Action::Update, array('metadata' => $baseMetadata));
+        // now merge with some incoming data
+        $this->Items->patch(Action::Update, array('metadatamerge' => $incomingMetadata));
+
+        $metadata = json_decode($this->Items->readOne()['metadata'], true, 512, JSON_THROW_ON_ERROR);
+        $fields = $metadata['extra_fields'];
+
+        // existing "weight" number keeps type/unit and receives normalized value.
+        $this->assertSame('number', $fields['weight']['type']);
+        $this->assertSame('12.5', $fields['weight']['value']);
+        $this->assertSame(array('g'), $fields['weight']['units']);
+        $this->assertSame('g', $fields['weight']['unit']);
+
+        // existing checkbox keeps type and receives normalized truthy value.
+        $this->assertSame('checkbox', $fields['certified']['type']);
+        $this->assertSame('on', $fields['certified']['value']);
+
+        // existing select keeps options even if incoming value is new.
+        $this->assertSame('select', $fields['choice']['type']);
+        $this->assertSame('C', $fields['choice']['value']);
+        $this->assertSame(array('A', 'B'), $fields['choice']['options']);
+
+        // existing user field keeps description/schema.
+        $this->assertSame('users', $fields['person in charge']['type']);
+        $this->assertSame('42', $fields['person in charge']['value']);
+        $this->assertSame('Select the person responsible.', $fields['person in charge']['description']);
+
+        // url keeps type.
+        $this->assertSame('url', $fields['website']['type']);
+        $this->assertSame('https://example.org', $fields['website']['value']);
+
+        // New fields are added and normalized according to their incoming type.
+        $this->assertSame('checkbox', $fields['new checkbox']['type']);
+        $this->assertSame('on', $fields['new checkbox']['value']);
+        $this->assertSame('text', $fields['new text']['type']);
+        $this->assertSame('hello', $fields['new text']['value']);
     }
 
     private function makeItemFromImmutableTemplateFor(AuthenticatedUser $user): Items
@@ -236,7 +330,7 @@ class ItemsTest extends \PHPUnit\Framework\TestCase
         $ItemsTypes->setId($templateId);
         $ItemsTypes->patch(Action::Update, array('canread_is_immutable' => 1));
         $Items = new Items($user);
-        $newId = $Items->createFromTemplate($templateId);
+        $newId = $Items->postAction(Action::Create, array('template' => $templateId));
         $Items->setId($newId);
         return $Items;
     }

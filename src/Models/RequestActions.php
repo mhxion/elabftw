@@ -25,6 +25,12 @@ use Elabftw\Traits\SetIdTrait;
 use Override;
 use PDO;
 
+use function _;
+use function array_map;
+use function preg_replace;
+use function sprintf;
+use function strtolower;
+
 /**
  * Request action for users
  */
@@ -80,11 +86,12 @@ final class RequestActions extends AbstractRest
         $sql = sprintf(
             'SELECT id, created_at, requester_userid, target_userid, entity_id, action, state
                 FROM %s_request_actions
-                WHERE id = :id',
+                WHERE id = :id AND entity_id = :entity_id',
             $this->entity->entityType->value
         );
         $req = $this->Db->prepare($sql);
         $req->bindParam(':id', $this->id, PDO::PARAM_INT);
+        $req->bindParam(':entity_id', $this->entity->id, PDO::PARAM_INT);
         $this->Db->execute($req);
 
         return $this->Db->fetch($req);
@@ -129,12 +136,15 @@ final class RequestActions extends AbstractRest
 
         $action = RequestableAction::from((int) $reqBody['target_action']);
 
+        $targetUserId = (int) $reqBody['target_userid'];
+        $targetUser = new Users($targetUserId);
         $Notifications = new ActionRequested(
+            $targetUser,
             $this->requester,
             $action,
             $this->entity,
         );
-        $Notifications->create((int) $reqBody['target_userid']);
+        $Notifications->create();
         $event = new AuditEventActionRequested($this->requester->userData['userid'], (int) $reqBody['target_userid'], $this->entity->id, $this->entity->entityType, $action);
         AuditLogs::create($event);
         $changelogValue = sprintf('%s (target userid: %d)', $event->getBody(), (int) $reqBody['target_userid']);

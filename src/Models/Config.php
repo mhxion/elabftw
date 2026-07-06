@@ -18,7 +18,7 @@ use Defuse\Crypto\Key;
 use Elabftw\AuditEvent\ConfigModified;
 use Elabftw\Elabftw\Env;
 use Elabftw\Elabftw\S3Config;
-use Elabftw\Elabftw\Update;
+use Elabftw\Elabftw\SchemaVersionChecker;
 use Elabftw\Enums\Action;
 use Elabftw\Enums\BasePermissions;
 use Elabftw\Exceptions\AppException;
@@ -31,6 +31,10 @@ use Override;
 use function array_map;
 use function urlencode;
 use function in_array;
+use function array_key_exists;
+use function count;
+use function sprintf;
+use function str_starts_with;
 
 /**
  * The general config table
@@ -58,7 +62,7 @@ final class Config extends AbstractRest
 
     /**
      * Insert the default values in the sql config table
-     * Only run once of first ever page load
+     * Only run once on first ever page load
      */
     public function create(): bool
     {
@@ -80,7 +84,7 @@ final class Config extends AbstractRest
             ('smtp_port', '587'),
             ('smtp_username', ''),
             ('smtp_verify_cert', '1'),
-            ('ts_authority', 'dfn'),
+            ('ts_authority', 'digicert'),
             ('ts_balance', '0'),
             ('ts_login', NULL),
             ('ts_password', NULL),
@@ -213,7 +217,7 @@ final class Config extends AbstractRest
             ('dspace_password', '')";
 
         $req = $this->Db->prepare($sql);
-        $req->bindValue(':schema', Update::REQUIRED_SCHEMA);
+        $req->bindValue(':schema', SchemaVersionChecker::REQUIRED_SCHEMA);
 
         return $this->Db->execute($req);
     }

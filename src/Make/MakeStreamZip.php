@@ -14,11 +14,15 @@ namespace Elabftw\Make;
 
 use DateTimeImmutable;
 use Elabftw\Elabftw\App;
+use Elabftw\Elabftw\BuildInfo;
 use Elabftw\Enums\Classification;
 use League\Flysystem\UnableToReadFile;
 use Elabftw\Services\MpdfProvider;
 use Elabftw\Interfaces\PdfMakerInterface;
 use Elabftw\Models\AbstractEntity;
+use Elabftw\Models\Instance2Rors;
+use Elabftw\Models\Teams2Rors;
+use Elabftw\Models\Users2Rors;
 use Elabftw\Models\Users\Users;
 use ZipStream\ZipStream;
 use Override;
@@ -73,11 +77,17 @@ class MakeStreamZip extends AbstractMakeZip
             $this->usePdfa,
         );
         $log = App::getDefaultLogger();
+        $instance2Rors = new Instance2Rors();
+        $teams2Rors = new Teams2Rors($this->requester->getTeam());
+        $users2Rors = new Users2Rors($this->requester->getUserid());
         return new MakePdf(
             log: $log,
             mpdfProvider: $MpdfProvider,
             requester: $this->requester,
             entityArr: array($entity),
+            instance2Rors: $instance2Rors,
+            teams2Rors: $teams2Rors,
+            users2Rors: $users2Rors,
             includeChangelog: $this->includeChangelog,
             classification: $this->classification,
         );
@@ -101,8 +111,8 @@ class MakeStreamZip extends AbstractMakeZip
     {
         $creationDateTime = new DateTimeImmutable();
         return array(
-            'elabftw_producer_version' => App::INSTALLED_VERSION,
-            'elabftw_producer_version_int' => App::INSTALLED_VERSION_INT,
+            'elabftw_producer_version' => BuildInfo::VERSION,
+            'elabftw_producer_version_int' => BuildInfo::VERSION_INT,
             'dateCreated' => $creationDateTime->format(DateTimeImmutable::ATOM),
         );
     }

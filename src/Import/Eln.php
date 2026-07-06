@@ -13,7 +13,7 @@ declare(strict_types=1);
 namespace Elabftw\Import;
 
 use DateTimeImmutable;
-use Elabftw\Elabftw\CreateUpload;
+use Elabftw\Elabftw\CreateUploadFromFs;
 use Elabftw\Enums\Action;
 use Elabftw\Enums\BasePermissions;
 use Elabftw\Enums\BodyContentType;
@@ -21,8 +21,12 @@ use Elabftw\Enums\EntityType;
 use Elabftw\Enums\FileFromString;
 use Elabftw\Enums\State;
 use Elabftw\Exceptions\ImproperActionException;
-use Elabftw\Hash\LocalFileHash;
+use Elabftw\Hash\FileHash;
 use Elabftw\Models\AbstractEntity;
+use Elabftw\Models\Comments;
+use Elabftw\Models\Steps;
+use Elabftw\Models\Tags;
+use Elabftw\Models\Changelog;
 use Elabftw\Models\Uploads;
 use Elabftw\Models\Users\Users;
 use Elabftw\Params\EntityParams;
@@ -41,6 +45,20 @@ use function json_decode;
 use function rawurlencode;
 use function sprintf;
 use function strtr;
+use function _;
+use function array_key_exists;
+use function count;
+use function date;
+use function explode;
+use function filter_var;
+use function is_string;
+use function json_encode;
+use function parse_str;
+use function parse_url;
+use function preg_replace;
+use function str_replace;
+use function str_starts_with;
+use function ucfirst;
 
 /**
  * Import a .eln file.
@@ -86,6 +104,7 @@ class Eln extends AbstractZip
             $requester,
             $UploadedFile,
             $fs,
+            $logger,
         );
         $this->count = $this->preProcess();
         // we might have been forced to cast to int a null value, so bring it back to null
@@ -215,7 +234,6 @@ class Eln extends AbstractZip
 
     private function preProcess(): int
     {
-        $this->logger->debug(sprintf('temporary directory in cache: %s', $this->tmpDir));
         $this->root = $this->getRootDirectory();
         $this->graph = $this->getGraph();
 
@@ -251,7 +269,7 @@ class Eln extends AbstractZip
     {
         $listing = $this->tmpFs->listContents($this->tmpDir);
         foreach ($listing as $item) {
-            if ($item instanceof \League\Flysystem\DirectoryAttributes) {
+            if ($item->isDir()) {
                 $this->logger->debug(sprintf('Found root directory in archive: %s', basename($item->path())));
                 return $item->path();
             }
@@ -353,7 +371,7 @@ class Eln extends AbstractZip
                             $comment['dateCreated'],
                             $this->transformIfNecessary($comment['text'] ?? '', true),
                         );
-                        $this->Entity->Comments->postAction(Action::Create, array('comment' => $content));
+                        new Comments($this->Entity)->postAction(Action::Create, array('comment' => $content));
                     }
                     break;
 
@@ -416,13 +434,13 @@ class Eln extends AbstractZip
                 case 'step':
                     if ($this->internalElnVersion < 104) {
                         foreach ($value as $step) {
-                            $this->Entity->Steps->importFromHowToStepOld($step);
+                            new Steps($this->Entity)->importFromHowToStepOld($step);
                         }
                     } else {
                         foreach ($value as $id) {
                             $step = $this->getNodeFromId($id['@id']);
                             $body = $this->getNodeFromId($step['itemListElement']['@id'])['text'];
-                            $this->Entity->Steps->importFromHowToStep($step, $body);
+                            new Steps($this->Entity)->importFromHowToStep($step, $body);
                         }
                     }
                     break;
@@ -432,9 +450,10 @@ class Eln extends AbstractZip
                     if (is_string($tags)) {
                         $tags = explode(self::TAGS_SEPARATOR, $tags);
                     }
+                    $Tags = new Tags($this->Entity);
                     foreach ($tags as $tag) {
                         if (!empty($tag)) {
-                            $this->Entity->Tags->create(new TagParam($this->transformIfNecessary($tag)), true);
+                            $Tags->create(new TagParam($this->transformIfNecessary($tag)), true);
                         }
                     }
                     break;
@@ -472,6 +491,40 @@ class Eln extends AbstractZip
         foreach ($dataset['hasPart'] ?? array() as $part) {
             $this->importPart($this->getNodeFromId($part['@id']));
         }
+
+        // Restore entity state (normal, archived, deleted).
+        $state = State::fromName($dataset['status'] ?? State::Normal->name);
+        // we use match(true) to be able to match a State and the Locked pseudo-state in the same match
+        match (true) {
+            $state === State::Archived => $this->Entity->patch(Action::Archive, array()),
+            $state === State::Deleted => $this->Entity->patch(Action::Update, array('state' => $state->value)),
+            // Restore locked/unlocked condition.
+            ($dataset['conditionsOfAccess'] ?? '') === 'Locked' => $this->Entity->patch(Action::Lock, array()),
+            default => null,
+        };
+
+        // remove all changelog created by the import (e.g., lock actions) and restore the initial entry's changelog
+        if (!empty($dataset['subjectOf'])) {
+            new Changelog($this->Entity)->replaceAll($this->updateActionsToChangelog($dataset['subjectOf']));
+        }
+    }
+
+    // convert export UpdateAction to changelog dataset
+    private function updateActionsToChangelog(array $actions): array
+    {
+        $changelog = array();
+        foreach ($actions as $action) {
+            if (($action['@type'] ?? '') !== 'UpdateAction') {
+                continue;
+            }
+            $changelog[] = array(
+                'created_at' => new DateTimeImmutable($action['startTime'])->format('Y-m-d H:i:s'),
+                'target' => $action['object'] ?? 'import',
+                'content' => $action['result'] ?? '',
+                'userid' => $this->requester->getUserid(),
+            );
+        }
+        return $changelog;
     }
 
     private function attrToHtml(array $attr, string $title): string
@@ -511,21 +564,22 @@ class Eln extends AbstractZip
                 $this->importFile($part);
                 break;
             default:
-                return;
         }
     }
 
     private function importFile(array $file): void
     {
-        // note: path transversal vuln is detected and handled by flysystem
-        $filepath = $this->tmpPath . '/' . basename($this->root) . '/' . $file['@id'];
+        // note: we cannot have path transversal vuln here because we use a temporary filesystem that cannot be escaped
+        $filepath = $this->tmpDir . '/' . basename($this->root) . '/' . $file['@id'];
+        $this->logger->debug(sprintf('Importing file: %s', $filepath));
         // fix for bloxberg attachments containing : character
         $filepath = strtr($filepath, ':', '_');
         // quick patch to fix issue with | in the title, but we will need a proper fix to avoid the need for such patches...
         $filepath = strtr($filepath, '|', '_');
         $filepath = strtr($filepath, '"', '_');
 
-        $hasher = new LocalFileHash($filepath);
+        //$hasher = new LocalFileHash($filepath);
+        $hasher = new FileHash($this->tmpFs, $filepath);
         $hash = $hasher->getHash();
         // CHECKSUM
         if ($this->verifyChecksum && $hash !== $file['sha256']) {
@@ -541,12 +595,13 @@ class Eln extends AbstractZip
             }
         }
         // CREATE
-        $newUploadId = $this->Entity->Uploads->create(new CreateUpload(
+        $newUploadId = $this->Entity->Uploads->create(new CreateUploadFromFs(
+            $this->tmpFs,
             $file['name'] ?? basename($file['@id']),
             $filepath,
             $hasher,
             $this->transformIfNecessary($file['description'] ?? '', true) ?: null,
-            state: ($file['creativeWorkStatus'] ?? '') === State::Archived->name ? State::Archived : State::Normal
+            state: ($file['creativeWorkStatus'] ?? '') === State::Archived->name ? State::Archived : State::Normal,
         ));
         // the alternateName holds the previous long_name of the file
         if (!empty($file['alternateName'])) {

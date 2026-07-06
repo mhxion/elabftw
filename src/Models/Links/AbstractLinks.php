@@ -19,7 +19,9 @@ use Elabftw\Enums\EntityType;
 use Elabftw\Enums\Metadata as MetadataEnum;
 use Elabftw\Enums\AccessType;
 use Elabftw\Enums\State;
+use Elabftw\Exceptions\ForbiddenException;
 use Elabftw\Exceptions\ImproperActionException;
+use Elabftw\Exceptions\ResourceNotFoundException;
 use Elabftw\Interfaces\QueryParamsInterface;
 use Elabftw\Models\AbstractEntity;
 use Elabftw\Models\AbstractRest;
@@ -31,6 +33,9 @@ use PDO;
 
 use function intval;
 use function json_encode;
+use function _;
+use function array_all;
+use function sprintf;
 
 /**
  * All about Links
@@ -66,12 +71,13 @@ abstract class AbstractLinks extends AbstractRest
     }
 
     // Copy links from one entity to another
-    public function duplicate(int $id, int $newId, bool $fromTemplate = false): int
+    public function duplicate(int $id, int $newId, bool $fromTemplate = false, bool $toTemplate = false): int
     {
-        $table = $fromTemplate ? $this->getTemplateTable() : $this->getTable();
-        $sql = 'INSERT IGNORE INTO ' . $this->getTable() . ' (item_id, link_id)
+        $sourceTable = $fromTemplate ? $this->getTemplateTable() : $this->getTable();
+        $targetTable = $toTemplate ? $this->getTemplateTable() : $this->getTable();
+        $sql = 'INSERT IGNORE INTO ' . $targetTable . ' (item_id, link_id)
             SELECT :new_id, link_id
-            FROM ' . $table . '
+            FROM ' . $sourceTable . '
             WHERE item_id = :old_id';
         $req = $this->Db->prepare($sql);
         $req->bindParam(':new_id', $newId, PDO::PARAM_INT);
@@ -139,6 +145,8 @@ abstract class AbstractLinks extends AbstractRest
         if ($this->Entity->id === $this->id && $this->Entity->entityType === $this->getTargetType()) {
             return 0;
         }
+        // this will throw exception if we don't have read access to target entity
+        $this->getTargetType()->toInstance($this->Entity->Users, $this->id);
 
         // use IGNORE to avoid failure due to a key constraint violations
         $sql = 'INSERT IGNORE INTO ' . $this->getTable() . ' (item_id, link_id) VALUES(:item_id, :link_id)';
@@ -187,12 +195,16 @@ abstract class AbstractLinks extends AbstractRest
     private function createChangelog(Action $action = Action::Add): void
     {
         $verb = $action === Action::Destroy ? _('Removed') : _('Added');
-        // build the changelog message with title + clickable URL
-        $anchor = sprintf(
-            '<a href="%1$s">%2$s</a>',
-            Tools::eLabHtmlspecialchars(sprintf('/%s?mode=view&id=%d', $this->getTargetType()->toPage(), $this->id ?? 0)),
-            Tools::eLabHtmlspecialchars($this->getTargetTitle())
-        );
+        try {
+            $this->getTargetType()->toInstance($this->Entity->Users, $this->id);
+            $anchor = sprintf(
+                '<a href="%1$s">%2$s</a>',
+                Tools::eLabHtmlspecialchars(sprintf('/%s?mode=view&id=%d', $this->getTargetType()->toPage(), $this->id ?? 0)),
+                Tools::eLabHtmlspecialchars($this->getTargetTitle())
+            );
+        } catch (ForbiddenException | ResourceNotFoundException) {
+            $anchor = '';
+        }
         $Changelog = new Changelog($this->Entity);
         $Changelog->create(new ContentParams(
             'links',
@@ -300,7 +312,7 @@ abstract class AbstractLinks extends AbstractRest
     private function prepareBindExecuteFetch(string $sql): array
     {
         $req = $this->Db->prepare($sql);
-        $req->bindValue(':team_id', $this->Entity->Users->team ?? 0, PDO::PARAM_INT);
+        $req->bindValue(':team_id', $this->Entity->Users->getTeam(), PDO::PARAM_INT);
         $req->bindParam(':id', $this->Entity->id, PDO::PARAM_INT);
         $req->bindValue(':state_normal', State::Normal->value, PDO::PARAM_INT);
         $req->bindValue(':state_archived', State::Archived->value, PDO::PARAM_INT);

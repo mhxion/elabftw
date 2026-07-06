@@ -33,6 +33,17 @@ use Override;
 use PDO;
 use Symfony\Component\HttpFoundation\InputBag;
 
+use function _;
+use function array_flip;
+use function array_intersect_key;
+use function array_keys;
+use function array_map;
+use function array_sum;
+use function implode;
+use function rtrim;
+use function sprintf;
+use function str_contains;
+
 /**
  * Compounds are chemical entities stored in the `compounds` SQL table
  */
@@ -463,6 +474,12 @@ final class Compounds extends AbstractRest
         $this->setId($id);
         $this->update(new CompoundParams('state', State::Normal->value));
         foreach ($compoundData as $key => $value) {
+            // Do not update empty pubchem_cid during upsert.
+            // This avoids errors on this unique nullable field.
+            if ($key === 'pubchem_cid' && ($value === null || $value === '')) {
+                continue;
+            }
+
             if ($value === true) {
                 // because the getContent of compoundParam will use onToBinary
                 $value = 'on';
@@ -585,7 +602,7 @@ final class Compounds extends AbstractRest
         $req = $this->Db->prepare($sql);
         $req->bindValue(':state_normal', State::Normal->value, PDO::PARAM_INT);
         $req->bindValue(':state_archived', State::Archived->value, PDO::PARAM_INT);
-        $req->execute();
+        $this->Db->execute($req);
         return $req->fetchAll();
     }
 

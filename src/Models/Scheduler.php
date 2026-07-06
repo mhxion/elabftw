@@ -22,17 +22,24 @@ use Elabftw\Exceptions\ImproperActionException;
 use Elabftw\Exceptions\UnprocessableContentException;
 use Elabftw\Interfaces\QueryParamsInterface;
 use Elabftw\Models\Notifications\EventDeleted;
-use Elabftw\Services\ApiParamsValidator;
+use Elabftw\Models\Users\Users;
 use Elabftw\Services\Filter;
 use Elabftw\Services\TeamsHelper;
 use Elabftw\Traits\EntityTrait;
 use Override;
 use PDO;
+use Throwable;
 
-use function array_walk;
 use function preg_replace;
-use function strlen;
-use function mb_substr;
+use function ksort;
+use function _;
+use function array_filter;
+use function array_key_exists;
+use function array_map;
+use function implode;
+use function sprintf;
+use function str_replace;
+use function trim;
 
 /**
  * All about the team's scheduler
@@ -107,28 +114,39 @@ final class Scheduler extends AbstractRest
         }
         $start = $this->normalizeDate($reqBody['start']);
         $end = $this->normalizeDate($reqBody['end'], true);
-        $this->checkConstraints($start, $end);
-        $this->checkMaxSlots();
 
         // users won't be able to create an entry in the past
         $this->isFutureOrExplode(DateTime::createFromFormat(self::DATETIME_FORMAT, $start));
 
         // fix booking at midnight on monday not working. See #2765
         // we add a second so it works
-        $start = preg_replace('/00:00:00/', '00:00:01', $start);
+        $start = str_replace('00:00:00', '00:00:01', $start);
+        // handle constraints during transaction
+        $this->Db->beginTransaction();
+        try {
+            // Serialize concurrent booking attempts for the same resource.
+            $this->lockItemForBooking();
+            $this->checkConstraints($start, $end);
+            $this->checkMaxSlots();
 
-        $sql = 'INSERT INTO team_events(team, item, start, end, userid, title)
+            $sql = 'INSERT INTO team_events(team, item, start, end, userid, title)
             VALUES(:team, :item, :start, :end, :userid, :title)';
-        $req = $this->Db->prepare($sql);
-        $req->bindParam(':team', $this->Items->Users->userData['team'], PDO::PARAM_INT);
-        $req->bindParam(':item', $this->Items->id, PDO::PARAM_INT);
-        $req->bindParam(':start', $start);
-        $req->bindParam(':end', $end);
-        $req->bindValue(':title', $this->filterTitle($reqBody['title'] ?? ''));
-        $req->bindParam(':userid', $this->Items->Users->userData['userid'], PDO::PARAM_INT);
-        $this->Db->execute($req);
+            $req = $this->Db->prepare($sql);
+            $req->bindParam(':team', $this->Items->Users->userData['team'], PDO::PARAM_INT);
+            $req->bindParam(':item', $this->Items->id, PDO::PARAM_INT);
+            $req->bindParam(':start', $start);
+            $req->bindParam(':end', $end);
+            $req->bindValue(':title', $this->filterTitle($reqBody['title'] ?? ''));
+            $req->bindParam(':userid', $this->Items->Users->userData['userid'], PDO::PARAM_INT);
+            $this->Db->execute($req);
 
-        return $this->Db->lastInsertId();
+            $eventId = $this->Db->lastInsertId();
+            $this->Db->commit();
+            return $eventId;
+        } catch (Throwable $e) {
+            $this->Db->rollback();
+            throw $e;
+        }
     }
 
     /**
@@ -180,7 +198,7 @@ final class Scheduler extends AbstractRest
         if ($canBookExpr === '') {
             $canBookExpr = '0';
         }
-
+        $boundSelects = $this->getBoundSelects();
         // the title of the event is title + Firstname Lastname of the user who booked it
         $sql = sprintf(
             "SELECT
@@ -198,14 +216,16 @@ final class Scheduler extends AbstractRest
                 CONCAT('[', items.title, '] ', team_events.title, ' (', u.firstname, ' ', u.lastname, ')') AS title,
                 items.title AS item_title,
                 items.book_is_cancellable,
-                CONCAT('#', items_categories.color) AS color,
+                items.booking_hourly_rate_notax,
+                items.booking_hourly_rate_tax,
+                (items.booking_hourly_rate_notax * TIMESTAMPDIFF(MINUTE, team_events.start, team_events.end)) / 60.0 AS booking_cost_notax,
+                (items.booking_hourly_rate_tax * TIMESTAMPDIFF(MINUTE, team_events.start, team_events.end)) / 60.0 AS booking_cost_tax,
+                COALESCE(NULLIF(CONCAT('#', items_categories.color), '#'), '#0c58ab') AS color,
                 items_categories.title AS items_category_title,
-                team_events.experiment,
+                %s,
                 items.category AS items_category,
                 items.id AS items_id,
-                experiments.title AS experiment_title,
-                team_events.item_link,
-                items_linkt.title AS item_link_title,
+                %s,
                 CASE WHEN %s THEN 1 ELSE 0 END AS canbook
             FROM team_events
             LEFT JOIN teams ON (team_events.team = teams.id)
@@ -219,6 +239,8 @@ final class Scheduler extends AbstractRest
                 AND team_events.start <= :end
                 AND team_events.end >= :start
                 %s",
+            $boundSelects['experiment'],
+            $boundSelects['item_link'],
             $canBookExpr,
             implode(' ', $this->filterSqlParts)
         );
@@ -236,14 +258,10 @@ final class Scheduler extends AbstractRest
     public function patch(Action $action, array $params): array
     {
         $this->canWriteOrExplode();
-
         match ($params['target']) {
-            'start' => $this->updateStart($params['delta']),
-            'end' => $this->updateEnd($params['delta']),
             'experiment' => $this->bind('experiment', $params['id']),
             'item_link' => $this->bind('item_link', $params['id']),
-            'title' => $this->updateTitle($params['content']),
-            'datetime' => $this->updateDateTime($params),
+            'title', 'datetime' => $this->update($params),
             default => throw new ImproperActionException('Incorrect target parameter.'),
         };
         return $this->readOne();
@@ -279,31 +297,73 @@ final class Scheduler extends AbstractRest
 
         // send a notification to all team admins
         $TeamsHelper = new TeamsHelper($this->Items->Users->userData['team']);
-        $Notif = new EventDeleted($this->readOne(), $this->Items->Users->userData['fullname']);
         $admins = $TeamsHelper->getAllAdminsUserid();
-        array_walk($admins, function ($userid) use ($Notif) {
-            if ($userid === $this->Items->Users->userData['userid']) {
-                return;
+        foreach ($admins as $adminId) {
+            if ($adminId === $this->Items->Users->userData['userid']) {
+                continue;
             }
-            $Notif->create($userid);
-        });
+            $adminUser = new Users($adminId);
+            $Notif = new EventDeleted($adminUser, $event, $this->Items->Users->userData['fullname']);
+            $Notif->create();
+        }
         return $this->Db->execute($req);
     }
 
-    private function updateDateTime(array $params): bool
+    /** Lock the resource row to serialize concurrent booking creation for the same item. */
+    private function lockItemForBooking(): void
     {
-        ApiParamsValidator::ensureRequiredKeysPresent(array('start', 'end'), $params);
-        $start = $this->normalizeDate($params['start']);
-        $end = $this->normalizeDate($params['end'], true);
-        $this->isFutureOrExplode(new DateTimeImmutable($start));
-        $this->isFutureOrExplode(new DateTimeImmutable($end));
-        $this->checkConstraints($start, $end);
-        $sql = 'UPDATE team_events SET start = :start, end = :end WHERE id = :id';
+        $sql = 'SELECT id FROM items WHERE id = :item FOR UPDATE';
         $req = $this->Db->prepare($sql);
-        $req->bindValue(':start', $start);
-        $req->bindValue(':end', $end);
+        $req->bindParam(':item', $this->Items->id, PDO::PARAM_INT);
+        $this->Db->execute($req);
+        if ($req->fetchColumn() === false) {
+            throw new ImproperActionException('Could not lock item for booking.');
+        }
+    }
+
+    private function update(array $params): void
+    {
+        $updates = array();
+        $bindings = array();
+        $this->updateTitle($params, $updates, $bindings);
+        $this->updateDateTime($params, $updates, $bindings);
+        if (empty($updates)) {
+            return; // nothing to update
+        }
+        $sql = 'UPDATE team_events SET ' . implode(', ', $updates) . ' WHERE team = :team AND id = :id';
+        $req = $this->Db->prepare($sql);
+        foreach ($bindings as $key => $value) {
+            $req->bindValue($key, $value);
+        }
+        $req->bindParam(':team', $this->Items->Users->userData['team'], PDO::PARAM_INT);
         $req->bindParam(':id', $this->id, PDO::PARAM_INT);
-        return $this->Db->execute($req);
+        $this->Db->execute($req);
+    }
+
+    private function updateTitle(array $params, array &$updates, array &$bindings): void
+    {
+        if (array_key_exists('title', $params)) {
+            $updates[] = 'title = :title';
+            $bindings[':title'] = $this->filterTitle((string) $params['title']);
+        }
+    }
+
+    private function updateDateTime(array $params, array &$updates, array &$bindings): void
+    {
+        if (array_key_exists('start', $params) || array_key_exists('end', $params)) {
+            if (!isset($params['start'], $params['end'])) {
+                throw new ImproperActionException('Start and end must both be provided.');
+            }
+            $start = $this->normalizeDate($params['start']);
+            $end = $this->normalizeDate($params['end'], true);
+            $this->isFutureOrExplode(new DateTimeImmutable($start));
+            $this->isFutureOrExplode(new DateTimeImmutable($end));
+            $this->checkConstraints($start, $end);
+            $updates[] = 'start = :start';
+            $updates[] = 'end = :end';
+            $bindings[':start'] = $start;
+            $bindings[':end'] = $end;
+        }
     }
 
     private function appendItemsIdsToSql(array $itemsIds): void
@@ -336,26 +396,34 @@ final class Scheduler extends AbstractRest
     {
         // the title of the event is title + Firstname Lastname of the user who booked it
         // the color is used by fullcalendar for the bg color of the event
-        $sql = "SELECT team_events.*,
-            CONCAT(team_events.title, ' (', u.firstname, ' ', u.lastname, ') ', COALESCE(experiments.title, '')) AS title,
+        $boundSelects = $this->getBoundSelects();
+        $sql = sprintf(
+            "SELECT team_events.*,
+            CONCAT(team_events.title, ' (', u.firstname, ' ', u.lastname, ')') AS title,
             team_events.title AS title_only,
-            CONCAT('#', items_categories.color) AS color,
-            experiments.title AS experiment_title,
-            items_linkt.title AS item_link_title,
-            items.title AS item_title, items.book_is_cancellable
+            COALESCE(NULLIF(CONCAT('#', items_categories.color), '#'), '#0c58ab') AS color,
+            %s, %s,
+            items.title AS item_title,
+            items.book_is_cancellable
             FROM team_events
             LEFT JOIN items ON (team_events.item = items.id)
             LEFT JOIN items AS items_linkt ON (team_events.item_link = items_linkt.id)
             LEFT JOIN experiments ON (experiments.id = team_events.experiment)
             LEFT JOIN items_categories ON (items.category = items_categories.id)
             LEFT JOIN users AS u ON team_events.userid = u.userid
+            LEFT JOIN users2teams ON (users2teams.users_id = :userid AND users2teams.teams_id = team_events.team)
             WHERE team_events.item = :item
                 AND team_events.start <= :end
-                AND team_events.end >= :start";
+                AND team_events.end >= :start",
+            $boundSelects['experiment'],
+            $boundSelects['item_link'],
+        );
+
         $req = $this->Db->prepare($sql);
         $req->bindParam(':item', $this->Items->id, PDO::PARAM_INT);
         $req->bindValue(':start', $this->normalizeDate($this->start));
         $req->bindValue(':end', $this->normalizeDate($this->end, true));
+        $req->bindValue(':userid', $this->Items->Users->userData['userid'], PDO::PARAM_INT);
         $this->Db->execute($req);
 
         return $req->fetchAll();
@@ -373,7 +441,9 @@ final class Scheduler extends AbstractRest
 
     private function readOneEvent(): array
     {
-        $sql = 'SELECT
+        $boundSelects = $this->getBoundSelects();
+        $sql = sprintf(
+            'SELECT
                 team_events.id,
                 team_events.team,
                 team_events.item,
@@ -388,85 +458,25 @@ final class Scheduler extends AbstractRest
                 items.book_is_cancellable,
                 items.book_cancel_minutes,
                 team_events.title AS title_only,
-                experiments.title AS experiment_title,
-                items_linkt.title AS item_link_title
+                %s, %s
             FROM team_events
             LEFT JOIN items ON (team_events.item = items.id)
             LEFT JOIN experiments ON (experiments.id = team_events.experiment)
             LEFT JOIN items AS items_linkt ON (team_events.item_link = items_linkt.id)
-            WHERE team_events.id = :id';
+            LEFT JOIN users2teams ON (users2teams.users_id = :userid AND users2teams.teams_id = team_events.team)
+            WHERE team_events.id = :id',
+            $boundSelects['experiment'],
+            $boundSelects['item_link'],
+        );
         $req = $this->Db->prepare($sql);
         $req->bindParam(':id', $this->id, PDO::PARAM_INT);
+        $req->bindValue(':userid', $this->Items->Users->userData['userid'], PDO::PARAM_INT);
         $this->Db->execute($req);
+
         $event = $this->Db->fetch($req);
         $this->Items->setId($event['item']);
+        ksort($event);
         return $event;
-    }
-
-    /**
-     * Update the start (and end) of an event (when you drag and drop it)
-     *
-     * @param array<string, string> $delta timedelta
-     */
-    private function updateStart(array $delta): bool
-    {
-        $event = $this->readOne();
-        $oldStart = DateTime::createFromFormat(self::DATETIME_FORMAT, $event['start']);
-        $oldEnd = DateTime::createFromFormat(self::DATETIME_FORMAT, $event['end']);
-        if (!$oldStart || !$oldEnd) {
-            throw new ImproperActionException('Invalid date format received.');
-        }
-        $seconds = '0';
-        if (strlen((string) $delta['milliseconds']) > 3) {
-            $seconds = mb_substr((string) $delta['milliseconds'], 0, -3);
-        }
-        $newStart = $oldStart->modify($delta['days'] . ' day')->modify($seconds . ' seconds');
-        $this->isFutureOrExplode($newStart);
-        $newEnd = $oldEnd->modify($delta['days'] . ' day')->modify($seconds . ' seconds');
-        $this->isFutureOrExplode($newEnd);
-        $this->checkConstraints($newStart->format(self::DATETIME_FORMAT), $newEnd->format(self::DATETIME_FORMAT));
-
-        $sql = 'UPDATE team_events SET start = :start, end = :end WHERE team = :team AND id = :id';
-        $req = $this->Db->prepare($sql);
-        $req->bindValue(':start', $newStart->format(self::DATETIME_FORMAT));
-        $req->bindValue(':end', $newEnd->format(self::DATETIME_FORMAT));
-        $req->bindParam(':team', $this->Items->Users->userData['team'], PDO::PARAM_INT);
-        $req->bindParam(':id', $this->id, PDO::PARAM_INT);
-        return $this->Db->execute($req);
-    }
-
-    /**
-     * Update the end of an event (when you resize it)
-     *
-     * @param array<string, string> $delta timedelta
-     */
-    private function updateEnd(array $delta): bool
-    {
-        $event = $this->readOne();
-        $oldEnd = DateTime::createFromFormat(self::DATETIME_FORMAT, $event['end']);
-        $seconds = '0';
-        if (strlen((string) $delta['milliseconds']) > 3) {
-            $seconds = mb_substr((string) $delta['milliseconds'], 0, -3);
-        }
-        $newEnd = $oldEnd->modify($delta['days'] . ' day')->modify($seconds . ' seconds'); // @phpstan-ignore-line
-        $this->isFutureOrExplode($newEnd);
-        $this->checkConstraints($event['start'], $newEnd->format(self::DATETIME_FORMAT));
-
-        $sql = 'UPDATE team_events SET end = :end WHERE team = :team AND id = :id';
-        $req = $this->Db->prepare($sql);
-        $req->bindValue(':end', $newEnd->format(self::DATETIME_FORMAT));
-        $req->bindParam(':team', $this->Items->Users->userData['team'], PDO::PARAM_INT);
-        $req->bindParam(':id', $this->id, PDO::PARAM_INT);
-        return $this->Db->execute($req);
-    }
-
-    private function updateTitle(string $title): bool
-    {
-        $sql = 'UPDATE team_events SET title = :title WHERE id = :id';
-        $req = $this->Db->prepare($sql);
-        $req->bindParam(':id', $this->id, PDO::PARAM_INT);
-        $req->bindValue(':title', $this->filterTitle($title));
-        return $this->Db->execute($req);
     }
 
     /**
@@ -520,6 +530,7 @@ final class Scheduler extends AbstractRest
         $this->checkOverlap($start, $end);
         $this->checkSlotTime($start, $end);
         $this->checkEndAfterStart($start, $end);
+        $this->checkBookingWindow($start);
     }
 
     private function formatDate(string $input): DateTimeImmutable
@@ -541,6 +552,20 @@ final class Scheduler extends AbstractRest
                 $endDate->format(self::DATETIME_FORMAT),
                 $startDate->format(self::DATETIME_FORMAT)
             ));
+        }
+    }
+
+    private function checkBookingWindow(string $start): void
+    {
+        $maxDays = (int) ($this->Items->entityData['booking_window_days'] ?? 0);
+        if ($maxDays <= 0) {
+            return;
+        }
+        $startDate = $this->formatDate($start);
+        $now = new DateTimeImmutable();
+        $maxAllowed = $now->modify(sprintf('+%d days', $maxDays))->setTime(23, 59, 59);
+        if ($startDate > $maxAllowed) {
+            throw new ImproperActionException(sprintf(_('Booking is limited to %d day(s) in advance.'), $maxDays));
         }
     }
 
@@ -665,5 +690,32 @@ final class Scheduler extends AbstractRest
         }
         $this->filterSqlParts[] = sprintf('AND %s = :%s', $column, $paramName);
         $this->filterBindings[$paramName] = $value;
+    }
+
+    /**
+     * Bound entities have their own read permissions, independent from the scheduler event.
+     * The event itself can be visible to the user, but the linked experiment/item may still be private.
+     * Only expose the bound entity id and title when the current user can read that entity.
+     */
+    private function getBoundSelect(AbstractEntity $entity, string $table, string $idColumn, string $idField, string $titleField): string
+    {
+        $builder = new EntitySqlBuilder($entity);
+        $canRead = str_replace('entity.', $table . '.', $builder->getCanFilter('canread'));
+        return sprintf(
+            'CASE WHEN %1$s.id IS NOT NULL %2$s THEN %3$s ELSE NULL END AS %4$s, CASE WHEN %1$s.id IS NOT NULL %2$s THEN %1$s.title ELSE NULL END AS %5$s',
+            $table,
+            $canRead,
+            $idColumn,
+            $idField,
+            $titleField
+        );
+    }
+
+    private function getBoundSelects(): array
+    {
+        return array(
+            'experiment' => $this->getBoundSelect(new Experiments($this->Items->Users), 'experiments', 'team_events.experiment', 'experiment', 'experiment_title'),
+            'item_link' => $this->getBoundSelect($this->Items, 'items_linkt', 'team_events.item_link', 'item_link', 'item_link_title'),
+        );
     }
 }

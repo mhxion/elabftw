@@ -30,6 +30,8 @@ use Override;
 use function password_hash;
 use function password_needs_rehash;
 use function password_verify;
+use function _;
+use function sleep;
 
 /**
  * Local auth service
@@ -77,7 +79,7 @@ final class Local implements AuthInterface
 
         // verify password
         if (password_verify($this->password, $this->result['password_hash']) !== true) {
-            throw new InvalidCredentialsException();
+            throw new InvalidCredentialsException($this->userid);
         }
         // check if it needs rehash (new algo)
         if (password_needs_rehash($this->result['password_hash'], PASSWORD_DEFAULT)) {

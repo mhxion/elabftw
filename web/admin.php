@@ -33,6 +33,7 @@ use Symfony\Component\HttpFoundation\InputBag;
 use Symfony\Component\HttpFoundation\Response;
 
 use function array_filter;
+use function _;
 
 /**
  * Administration panel of a team
@@ -56,7 +57,6 @@ try {
     $teamStats = $App->Teams->getStats($App->Users->userData['team']);
     $FavTags = new FavTags($App->Users);
     $favTagsArr = $FavTags->readAll();
-
 
     if ($App->Request->query->has('templateid')) {
         $ItemsTypes->setId($App->Request->query->getInt('templateid'));
@@ -124,7 +124,7 @@ try {
         'remoteDirectoryUsersArr' => $remoteDirectoryUsersArr,
         'scopedTeamgroupsArr' => $TeamGroups->readScopedTeamgroups(),
         'teamStats' => $teamStats,
-        'teamsArr' => $App->Teams->readAllComplete(),
+        'teamsArr' => $App->Teams->selectAll(),
         'visibleTeamsArr' => $App->Teams->readAllVisible(),
         'unvalidatedUsersArr' => $unvalidatedUsersArr,
         'usersArr' => $usersArr,

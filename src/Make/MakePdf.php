@@ -23,9 +23,12 @@ use Elabftw\Enums\Storage;
 use Elabftw\Interfaces\MpdfProviderInterface;
 use Elabftw\Models\AbstractEntity;
 use Elabftw\Models\Changelog;
+use Elabftw\Models\Instance2Rors;
 use Elabftw\Models\Notifications\MathjaxFailed;
 use Elabftw\Models\Notifications\PdfAppendmentFailed;
 use Elabftw\Models\Notifications\PdfGenericError;
+use Elabftw\Models\Teams2Rors;
+use Elabftw\Models\Users2Rors;
 use Elabftw\Models\Users\Users;
 use Elabftw\Services\Filter;
 use Elabftw\Services\Tex2Svg;
@@ -40,6 +43,17 @@ use function implode;
 use function str_replace;
 use function strlen;
 use function strtolower;
+use function base64_encode;
+use function basename;
+use function count;
+use function error_reporting;
+use function htmlspecialchars_decode;
+use function is_array;
+use function parse_str;
+use function parse_url;
+use function preg_match_all;
+use function sprintf;
+use function array_merge;
 
 /**
  * Create a pdf from an Entity
@@ -68,6 +82,9 @@ class MakePdf extends AbstractMakePdf
         MpdfProviderInterface $mpdfProvider,
         protected Users $requester,
         protected array $entityArr,
+        protected Instance2Rors $instance2Rors,
+        protected Teams2Rors $teams2Rors,
+        protected Users2Rors $users2Rors,
         bool $includeChangelog = false,
         Classification $classification = Classification::None,
     ) {
@@ -111,8 +128,8 @@ class MakePdf extends AbstractMakePdf
         // use strlen for binary data, not mb_strlen
         $this->contentSize = strlen($output);
         if ($this->errors && $this->notifications) {
-            $Notifications = new PdfGenericError();
-            $Notifications->create($this->requester->userData['userid']);
+            $Notifications = new PdfGenericError($this->requester);
+            $Notifications->create();
         }
         return $output;
     }
@@ -172,9 +189,10 @@ class MakePdf extends AbstractMakePdf
             if ($this->failedAppendPdfs) {
                 /** @psalm-suppress PossiblyNullArgument */
                 $this->errors[] = new PdfAppendmentFailed(
+                    $this->requester,
                     $this->Entity->id,
                     $this->Entity->entityType->toPage(),
-                    implode(', ', $this->failedAppendPdfs)
+                    implode(', ', $this->failedAppendPdfs),
                 );
             }
         }
@@ -191,9 +209,18 @@ class MakePdf extends AbstractMakePdf
         // Inform user that there was a problem with Tex rendering
         if ($Tex2Svg->mathJaxFailed) {
             /** @psalm-suppress PossiblyNullArgument */
-            $this->errors[] = new MathjaxFailed($this->Entity->id, $this->Entity->entityType->toPage());
+            $this->errors[] = new MathjaxFailed($this->requester, $this->Entity->id, $this->Entity->entityType->toPage());
         }
         return $content;
+    }
+
+    private function getRors(int $teamid, int $userid): array
+    {
+        return array_merge(
+            $this->instance2Rors->readAll(),
+            $this->teams2Rors->readAllFromId($teamid),
+            $this->users2Rors->readAllFromId($userid),
+        );
     }
 
     /**
@@ -203,17 +230,22 @@ class MakePdf extends AbstractMakePdf
     {
         $date = new DateTimeImmutable($this->Entity->entityData['date'] ?? date('Ymd'));
 
-        $locked = $this->Entity->entityData['locked'];
-        $lockerName = $this->Entity->getLockerFullname();
-        $lockDate = Filter::separateDateAndTime($this->Entity->entityData['locked_at'] ?? '');
+        $isLocked = $this->Entity->entityData['locked'] === 1;
+        $lockedAt = Filter::separateDateAndTime($this->Entity->entityData['locked_at'] ?? '');
+        if ($isLocked) {
+            $formattedLockedAt = Filter::formatLocalDate(new DateTimeImmutable($this->Entity->entityData['locked_at']));
+        }
 
-        $timestamped = $this->Entity->entityData['timestamped'];
-        $timestamperName = $this->Entity->getTimestamperFullname();
+        $isTimestamped = $this->Entity->entityData['timestamped'] === 1;
         $timestampedAt = Filter::separateDateAndTime($this->Entity->entityData['timestamped_at'] ?? '');
+        if ($isTimestamped) {
+            $formattedTimestampedAt = Filter::formatLocalDate(new DateTimeImmutable($this->Entity->entityData['timestamped_at']));
+        }
 
-        // Format date for pdf title
-        if ($this->Entity->entityData['timestamped'] === 1) {
-            $localDate = Filter::formatLocalDate(new DateTimeImmutable($this->Entity->entityData['timestamped_at']));
+        $isSigned = $this->Entity->entityData['signature_count'] > 0;
+        $signedAt = Filter::separateDateAndTime($this->Entity->entityData['last_signed_at'] ?? '');
+        if ($isSigned) {
+            $formattedSignedAt = Filter::formatLocalDate(new DateTimeImmutable($this->Entity->entityData['last_signed_at']));
         }
 
         // read the content of the thumbnail here to feed the template
@@ -245,16 +277,17 @@ class MakePdf extends AbstractMakePdf
             'includeChangelog' => $this->includeChangelog,
             'ghsImagesPath' => self::GHS_FOLDER,
             'includeFiles' => $this->includeAttachments,
-            'locked' => $locked,
-            'lockDate' => $lockDate['date'],
-            'lockTime' => $lockDate['time'],
-            'lockerName' => $lockerName,
-            'timestamped' => $timestamped,
-            'timestampDate' => $timestampedAt['date'],
-            'timestampTime' => $timestampedAt['time'],
-            'timestamperName' => $timestamperName,
-            'localDate' => $localDate ?? '',
+            'isLocked' => $isLocked,
+            'lockedAt' => $lockedAt,
+            'lockDateAt' => $formattedLockedAt ?? '',
+            'isTimestamped' => $isTimestamped,
+            'timestampedAt' => $timestampedAt,
+            'formattedTimestampedAt' => $formattedTimestampedAt ?? '',
+            'isSigned' => $isSigned,
+            'signedAt' => $signedAt,
+            'formattedSignedAt' => $formattedSignedAt ?? '',
             'pdfSig' => $this->requester->userData['pdf_sig'],
+            'rors' => $this->getRors($this->Entity->entityData['team'], $this->Entity->entityData['userid']),
             // TODO fix for templates
             'linkBaseUrl' => $baseUrls,
             'url' => sprintf('%s/%s?mode=view&id=%d', $siteUrl, $this->Entity->entityType->toPage(), $this->Entity->id ?? 0),

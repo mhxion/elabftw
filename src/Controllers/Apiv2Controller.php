@@ -14,6 +14,7 @@ namespace Elabftw\Controllers;
 
 use Elabftw\Elabftw\App;
 use Elabftw\Elabftw\Env;
+use Elabftw\Elabftw\SchemaVersionChecker;
 use Elabftw\Enums\Action;
 use Elabftw\Enums\ApiEndpoint;
 use Elabftw\Enums\ApiSubModels;
@@ -33,6 +34,7 @@ use Elabftw\Make\Exports;
 use Elabftw\Models\AbstractEntity;
 use Elabftw\Models\ApiKeys;
 use Elabftw\Models\Batch;
+use Elabftw\Models\Branding;
 use Elabftw\Models\Comments;
 use Elabftw\Models\Compounds;
 use Elabftw\Models\Config;
@@ -47,6 +49,7 @@ use Elabftw\Models\IdpsEndpoints;
 use Elabftw\Models\IdpsSources;
 use Elabftw\Models\Info;
 use Elabftw\Models\Instance;
+use Elabftw\Models\Instance2Rors;
 use Elabftw\Models\Items;
 use Elabftw\Models\ItemsStatus;
 use Elabftw\Models\Notifications\EventDeleted;
@@ -62,11 +65,14 @@ use Elabftw\Models\StorageUnits;
 use Elabftw\Models\Tags;
 use Elabftw\Models\TeamGroups;
 use Elabftw\Models\Teams;
+use Elabftw\Models\Teams2Rors;
 use Elabftw\Models\TeamTags;
 use Elabftw\Models\Todolist;
 use Elabftw\Models\UnfinishedSteps;
 use Elabftw\Models\Uploads;
 use Elabftw\Models\UserRequestActions;
+use Elabftw\Models\Users2Rors;
+use Elabftw\Models\Users\AnonymousUser;
 use Elabftw\Models\Users\Users;
 use Elabftw\Models\UserUploads;
 use Elabftw\Services\Email;
@@ -84,6 +90,13 @@ use Override;
 use Symfony\Component\Mailer\Mailer;
 use Symfony\Component\Mailer\Transport;
 
+use function implode;
+use function in_array;
+use function json_decode;
+use function sprintf;
+use function str_starts_with;
+use function trim;
+
 /**
  * For API V2 requests
  */
@@ -94,6 +107,8 @@ final class Apiv2Controller extends AbstractApiController
     private RestInterface $Model;
 
     private ?int $subId = null;
+
+    private ?string $subIdString = null;
 
     private bool $hasSubmodel = false;
 
@@ -152,10 +167,18 @@ final class Apiv2Controller extends AbstractApiController
         // load Model
         $this->Model = $this->getModel();
         // load submodel
-        if (!empty($req[5])) {
-            $subId = (int) ($req[6] ?? '');
+        $submodel = (string) ($req[5] ?? '');
+        $subIdString = $req[6] ?? '';
+        // no id for /instance
+        if ($this->Model instanceof Instance) {
+            $submodel = (string) ($req[4] ?? '');
+            $subIdString = $req[5] ?? '';
+        }
+        if (!empty($submodel)) {
+            $subId = (int) $subIdString;
+            $this->subIdString = !empty($subIdString) ? $subIdString : null;
             $this->subId = $subId > 0 ? $subId : null;
-            $this->Model = $this->getSubModel(ApiSubModels::tryFrom((string) $req[5]));
+            $this->Model = $this->getSubModel(ApiSubModels::tryFrom($submodel));
             $this->hasSubmodel = true;
         }
 
@@ -174,7 +197,9 @@ final class Apiv2Controller extends AbstractApiController
                 $this->Request->query->set('id', $this->id);
             }
         }
-        if ($this->Request->getContent()) {
+
+        $contentType = $this->Request->headers->get('content-type') ?? '';
+        if ($this->Request->getContent() && !str_starts_with($contentType, 'multipart/form-data')) {
             try {
                 // SET REQBODY
                 $this->reqBody = json_decode($this->Request->getContent(), true, 512, JSON_THROW_ON_ERROR);
@@ -209,6 +234,21 @@ final class Apiv2Controller extends AbstractApiController
             $this->reqBody['owner'] = $this->Request->request->getInt('owner');
             $this->reqBody['canread_base'] = (BasePermissions::tryFrom($this->Request->request->getInt('canread_base')) ?? BasePermissions::Team)->value;
             $this->reqBody['canwrite_base'] = (BasePermissions::tryFrom($this->Request->request->getInt('canwrite_base')) ?? BasePermissions::User)->value;
+            $this->action = Action::tryFrom($this->Request->request->getString('action')) ?? Action::Create;
+        }
+
+        if (
+            $this->Model instanceof Branding &&
+            str_starts_with($this->Request->headers->get('content-type') ?? '', 'multipart/form-data')
+        ) {
+            $file = $this->Request->files->get('file');
+
+            if ($file === null) {
+                throw new ImproperActionException('Error reading file!');
+            }
+
+            $this->reqBody['file'] = $file;
+            $this->action = Action::tryFrom($this->Request->request->getString('action')) ?? Action::Update;
         }
         $id = $this->Model->postAction($this->action, $this->reqBody);
         return new Response('', Response::HTTP_CREATED, array('Location' => sprintf('%s/%s%d', Env::asUrl('SITE_URL'), $this->Model->getApiPath(), $id)));
@@ -228,10 +268,12 @@ final class Apiv2Controller extends AbstractApiController
         return match ($this->format) {
             ExportFormat::Binary => (
                 function () {
-                    if ($this->Model instanceof Uploads || $this->Model instanceof Exports) {
-                        return $this->Model->readBinary();
+                    if ($this->Model instanceof Uploads || $this->Model instanceof Exports || $this->Model instanceof Branding) {
+                        $response = $this->Model->readBinary();
+                        $response->isNotModified($this->Request);
+                        return $response;
                     }
-                    throw new ImproperActionException('Incorrect format (binary): only available for uploads endpoint.');
+                    throw new ImproperActionException('Incorrect format (binary): only available for uploads/exports/branding endpoints.');
                 }
             )(),
             ExportFormat::Csv,
@@ -254,6 +296,7 @@ final class Apiv2Controller extends AbstractApiController
             // set default action for patch
             $this->action = Action::Update;
         }
+
         return $this->Model->patch($this->action, $this->reqBody);
     }
 
@@ -327,7 +370,7 @@ final class Apiv2Controller extends AbstractApiController
                 $this->requester,
                 $this->Request->query->get('scope') === 'team',
             ),
-            ApiEndpoint::Users => new Users($this->id, $this->requester->team, $this->requester),
+            ApiEndpoint::Users => $this->requester instanceof AnonymousUser ? $this->requester : new Users($this->id, $this->requester->getTeam(), $this->requester),
         };
     }
 
@@ -335,6 +378,7 @@ final class Apiv2Controller extends AbstractApiController
     {
         $Config = Config::getConfig();
         return new Email(
+            new SchemaVersionChecker((int) $Config->configArr['schema']),
             new Mailer(Transport::fromDsn($Config->getDsn())),
             App::getDefaultLogger(),
             $Config->configArr['mail_from'],
@@ -345,6 +389,7 @@ final class Apiv2Controller extends AbstractApiController
     private function getSubModel(?ApiSubModels $submodel): RestInterface
     {
         if ($this->Model instanceof AbstractEntity) {
+            $this->Model->readOne();
             $Config = Config::getConfig();
             return match ($submodel) {
                 ApiSubModels::Comments => new Comments($this->Model, $this->subId),
@@ -375,6 +420,7 @@ final class Apiv2Controller extends AbstractApiController
                 ApiSubModels::ResourcesCategories => new ResourcesCategories($this->Model, $this->subId),
                 ApiSubModels::ItemsStatus => new ItemsStatus($this->Model, $this->subId),
                 ApiSubModels::ProcurementRequests => new ProcurementRequests($this->Model, $this->subId),
+                ApiSubModels::Rors => new Teams2Rors($this->Model->id ?? 0, $this->Model->canWrite(), $this->subIdString),
                 ApiSubModels::Tags => new TeamTags($this->requester, $this->subId),
                 ApiSubModels::Teamgroups => new TeamGroups($this->requester, $this->subId),
                 default => throw new InvalidApiSubModelException(ApiEndpoint::Teams),
@@ -385,6 +431,7 @@ final class Apiv2Controller extends AbstractApiController
                 ApiSubModels::Notifications => new UserNotifications($this->Model, $this->subId),
                 ApiSubModels::RequestActions => new UserRequestActions($this->Model),
                 ApiSubModels::SigKeys => new SigKeys($this->requester, $this->subId),
+                ApiSubModels::Rors => new Users2Rors($this->Model->getUserid(), $this->requester->isAdminOf($this->Model->getUserid()), $this->subIdString),
                 // the uploads users/X/uploads endpoint forces the use of the requester
                 ApiSubModels::Uploads => new UserUploads($this->requester, $this->subId),
                 default => throw new InvalidApiSubModelException(ApiEndpoint::Users),
@@ -392,7 +439,7 @@ final class Apiv2Controller extends AbstractApiController
         }
         if ($this->Model instanceof Scheduler) {
             return match ($submodel) {
-                ApiSubModels::Notifications => new EventDeleted($this->Model->readOne(), $this->requester->userData['fullname']),
+                ApiSubModels::Notifications => new EventDeleted($this->requester, $this->Model->readOne(), $this->requester->userData['fullname']),
                 default => throw new InvalidApiSubModelException(ApiEndpoint::Event),
             };
         }
@@ -401,6 +448,13 @@ final class Apiv2Controller extends AbstractApiController
                 ApiSubModels::IdpsCerts => new IdpsCerts($this->requester, $this->id, $this->subId),
                 ApiSubModels::IdpsEndpoints => new IdpsEndpoints($this->requester, $this->id, $this->subId),
                 default => throw new InvalidApiSubModelException(ApiEndpoint::Idps),
+            };
+        }
+        if ($this->Model instanceof Instance) {
+            return match ($submodel) {
+                ApiSubModels::Branding => new Branding($this->requester->isSysadmin(), $this->subId),
+                ApiSubModels::Rors => new Instance2Rors($this->requester->isSysadmin(), $this->subIdString),
+                default => throw new InvalidApiSubModelException(ApiEndpoint::Instance),
             };
         }
         throw new ImproperActionException('Incorrect endpoint.');
@@ -412,16 +466,24 @@ final class Apiv2Controller extends AbstractApiController
             throw new IllegalActionException('Non sysadmin user tried to use a restricted api endpoint.');
         }
 
-        // allow multipart/form-data for the POST/uploads and POST/import endpoints only,
+        $contentType = $this->Request->headers->get('content-type') ?? '';
+
+        // allow multipart/form-data for:
+        // - POST uploads/import
+        // - POST branding
         // use str_starts_with because the actual header will also contain the boundary
-        if (str_starts_with($this->Request->headers->get('content-type') ?? '', 'multipart/form-data') &&
-            ($this->Model instanceof Uploads || $this->Model instanceof ImportHandler) &&
-            $this->Request->getMethod() === Request::METHOD_POST) {
+        if (str_starts_with($contentType, 'multipart/form-data') &&
+            $this->Request->getMethod() === Request::METHOD_POST &&
+            (
+                $this->Model instanceof Uploads ||
+                $this->Model instanceof ImportHandler ||
+                $this->Model instanceof Branding
+            )) {
             return;
         }
 
         // only accept json content-type unless it's GET or DELETE (also prevents csrf!)
-        if (!in_array($this->Request->getMethod(), array(Request::METHOD_GET, Request::METHOD_DELETE), true) && $this->Request->headers->get('content-type') !== 'application/json') {
+        if (!in_array($this->Request->getMethod(), array(Request::METHOD_GET, Request::METHOD_DELETE), true) && $contentType !== 'application/json') {
             throw new ImproperActionException('Incorrect content-type header.');
         }
     }

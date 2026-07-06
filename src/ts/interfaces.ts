@@ -53,6 +53,8 @@ interface Selected {
   experiments_tags: number[];
   users_experiments: number[];
   users_resources: number[];
+  users_experiments_templates: number[];
+  users_resources_templates: number[];
   tags: number[];
   userid: number;
   team: number;
@@ -90,6 +92,8 @@ enum Action {
   CreateProcurementRequest = 'createprocurementrequest',
   Disable2fa = 'disable2fa',
   Duplicate = 'duplicate',
+  EmailBookers = 'emailbookers',
+  EmailTeam = 'emailteam',
   Finish = 'finish',
   ForceLock = 'forcelock',
   ForceUnlock = 'forceunlock',

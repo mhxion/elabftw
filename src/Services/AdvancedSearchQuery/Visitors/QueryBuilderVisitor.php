@@ -34,6 +34,14 @@ use function array_merge;
 use function bin2hex;
 use function random_bytes;
 use function ucfirst;
+use function array_column;
+use function array_push;
+use function array_unique;
+use function htmlspecialchars;
+use function implode;
+use function in_array;
+use function json_encode;
+use function sprintf;
 
 /** @psalm-suppress UnusedParam */
 final class QueryBuilderVisitor implements Visitor
@@ -430,7 +438,7 @@ final class QueryBuilderVisitor implements Visitor
         $bindValues = array();
         foreach (array_unique($users) as $user) {
             $param = $this->getUniqueID();
-            $queryParts[] = 'users.userid = ' . $param;
+            $queryParts[] = 'entity.userid = ' . $param;
             $bindValues[] = array(
                 'param' => $param,
                 'value' => $user,
@@ -510,7 +518,7 @@ final class QueryBuilderVisitor implements Visitor
         $bindValues = array();
         foreach ($filteredSearchArr as $value) {
             $param = $this->getUniqueID();
-            $queryParts[] = "JSON_EXTRACT(entity.canread, '$.base') = " . $param;
+            $queryParts[] = 'entity.canread_base = ' . $param;
             $bindValues[] = array(
                 'param' => $param,
                 'value' => $value,

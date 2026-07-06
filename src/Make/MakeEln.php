@@ -22,9 +22,13 @@ use Elabftw\Enums\Storage;
 use Elabftw\Exceptions\IllegalActionException;
 use Elabftw\Models\AbstractEntity;
 use Elabftw\Models\Experiments;
+use Elabftw\Models\Instance2Rors;
 use Elabftw\Models\Items;
+use Elabftw\Models\Teams2Rors;
+use Elabftw\Models\Users2Rors;
 use Elabftw\Models\Users\Users;
 use Elabftw\Params\BaseQueryParams;
+use Elabftw\Services\UsersHelper;
 use Elabftw\Traits\TwigTrait;
 use League\Flysystem\UnableToReadFile;
 use ZipStream\ZipStream;
@@ -34,6 +38,25 @@ use RuntimeException;
 
 use function array_push;
 use function ksort;
+use function array_column;
+use function array_key_exists;
+use function array_key_first;
+use function array_merge;
+use function array_reduce;
+use function date;
+use function explode;
+use function fclose;
+use function fopen;
+use function hash;
+use function hash_file;
+use function implode;
+use function in_array;
+use function json_decode;
+use function json_encode;
+use function random_bytes;
+use function sprintf;
+use function strtr;
+use function array_map;
 
 /**
  * Make an ELN archive
@@ -42,9 +65,16 @@ class MakeEln extends AbstractMakeEln
 {
     use TwigTrait;
 
-    public function __construct(protected LoggerInterface $logger, ZipStream $Zip, protected Users $requester, protected array $entityArr)
-    {
-        parent::__construct($Zip);
+    public function __construct(
+        protected LoggerInterface $logger,
+        ZipStream $Zip,
+        protected Users $requester,
+        protected array $entityArr,
+        protected Instance2Rors $instance2Rors,
+        protected Teams2Rors $teams2Rors,
+        protected Users2Rors $users2Rors,
+    ) {
+        parent::__construct($Zip, $instance2Rors);
     }
 
     /**
@@ -147,14 +177,15 @@ class MakeEln extends AbstractMakeEln
     {
         // experiments:123 or items:123
         $slug = self::toSlug($entity);
-        // only process an entity once
+        // only process an entity once, but still return its folder so links to already processed entities are preserved
         if (in_array($slug, $this->processedEntities, true)) {
-            return false;
+            return $this->processedEntityFolders[$slug] ?? false;
         }
         $e = $entity->entityData;
         $hasPart = array();
         $currentDatasetFolder = self::getDatasetFolderName();
         $this->processedEntities[] = $slug;
+        $this->processedEntityFolders[$slug] = $currentDatasetFolder;
         $this->folder = $this->root . '/' . $currentDatasetFolder;
         $this->rootParts[] = array('@id' => './' . $currentDatasetFolder);
         // COMMENTS
@@ -219,24 +250,20 @@ class MakeEln extends AbstractMakeEln
         // LINKS (mentions)
         // this array will be added to the "mentions" attribute of the main dataset
         $mentions = array();
-        $linkTypes = array('experiments', 'items');
-        foreach ($linkTypes as $type) {
-            foreach ($e[$type . '_links'] as $link) {
-                try {
-                    if ($type === 'items') {
-                        $link = new Items($this->requester, $link['entityid'], $this->bypassReadPermission);
-                    } else {
-                        $link = new Experiments($this->requester, $link['entityid'], $this->bypassReadPermission);
-                    }
-                    // WARNING: recursion!
-                    $linkAtId = $this->processEntity($link);
-                    if ($linkAtId !== false) {
-                        $mentions[] = array('@id' => './' . $linkAtId);
-                    }
-                } catch (IllegalActionException) {
-                    continue;
-                }
-            }
+        foreach (array('experiments', 'items') as $type) {
+            $mentions = array_merge(
+                $mentions,
+                $this->processEntityLinks($e[$type . '_links'] ?? array(), $type, true),
+            );
+        }
+        // RELATED LINKS
+        // These are entities linking to the current one. Process them so their own mentions restore the original direction.
+        $relatedLinkTypes = array(
+            'related_experiments_links' => 'experiments',
+            'related_items_links' => 'items',
+        );
+        foreach ($relatedLinkTypes as $key => $type) {
+            $this->processEntityLinks($e[$key] ?? array(), $type, false);
         }
 
         $datasetNode = array(
@@ -255,7 +282,10 @@ class MakeEln extends AbstractMakeEln
             $datasetNode,
             array('alternateName' => $e['custom_id'] ?? ''),
             array('comment' => $comments),
+            array('conditionsOfAccess' => $e['locked'] === 1 ? 'Locked' : 'Unlocked'),
             array('creativeWorkStatus' => $e['status_title'] ?? ''),
+            array('subjectOf' => $this->changelogToUpdateActions($e['changelog'] ?? array())),
+            array('status' => State::from($e['state'])->name),
             array('hasPart' => $hasPart),
             array('identifier' => $e['elabid'] ?? ''),
             array('keywords' => $keywords),
@@ -313,7 +343,7 @@ class MakeEln extends AbstractMakeEln
             }
             // add files to archive
             $file['uuid'] = Tools::getUuidv4();
-            $this->addAttachedFileInZip($this->folder . '/' . $file['uuid'], $storageFs->readStream($file['long_name']));
+            $this->addAttachedFileInZip($this->folder . $file['uuid'], $storageFs->readStream($file['long_name']));
         }
         return $filesArr;
     }
@@ -413,6 +443,23 @@ class MakeEln extends AbstractMakeEln
         return $res;
     }
 
+    protected function getUserRors(Users $user): array
+    {
+        $teamsRors = array();
+        $UsersHelper = new UsersHelper($user->getUserid());
+        $teams = $UsersHelper->getTeamsIdFromUserid();
+        foreach ($teams as $teamid) {
+            $teamsRors = array_merge($teamsRors, $this->teams2Rors->readAllFromId($teamid));
+        }
+
+        return array_map(
+            static fn(array $row): array => array(
+                '@id' => 'https://ror.org/' . $row['ror'],
+            ),
+            array_merge($this->users2Rors->readAllFromId($user->getUserid()), $teamsRors)
+        );
+    }
+
     /**
      * Generate an author node unless it exists already
      */
@@ -430,6 +477,7 @@ class MakeEln extends AbstractMakeEln
             'givenName' => $author->userData['firstname'],
             'familyName' => $author->userData['lastname'],
             'email' => $author->userData['email'],
+            'affiliation' => $this->getUserRors($author),
         );
         // only add an identifier property if there is an orcid
         if (!empty($author->userData['orcid'])) {
@@ -440,5 +488,51 @@ class MakeEln extends AbstractMakeEln
             $this->authors[] = $node;
         }
         return $id;
+    }
+
+    // convert changelog actions to schema.org valid fields UpdateAction
+    private function changelogToUpdateActions(array $changelog): array
+    {
+        $actions = array();
+
+        foreach ($changelog as $log) {
+            $actions[] = array(
+                '@id' => 'updateaction://' . Tools::getUuidv4(),
+                '@type' => 'UpdateAction',
+                'agent' => array('@id' => $this->getAuthorId(new Users($log['userid']))),
+                'object' => $log['target'] ?? '',
+                'result' => $log['content'] ?? '',
+                'startTime' => new DateTimeImmutable($log['created_at'])->format(DateTimeImmutable::ATOM),
+            );
+        }
+        return $actions;
+    }
+
+    // Process entity links and optionally return them as RO-Crate mentions.
+    private function processEntityLinks(array $links, string $type, bool $asMentions): array
+    {
+        $mentions = array();
+        foreach ($links as $link) {
+            try {
+                if ($type === 'items') {
+                    $linkedEntity = new Items($this->requester, $link['entityid'], $this->bypassReadPermission);
+                } else {
+                    $linkedEntity = new Experiments($this->requester, $link['entityid'], $this->bypassReadPermission);
+                }
+                // WARNING: recursion!
+                $linkAtId = $this->processEntity($linkedEntity);
+                if ($asMentions && $linkAtId !== false) {
+                    $mentions[] = array('@id' => './' . $linkAtId);
+                }
+            } catch (IllegalActionException $ex) {
+                $this->logger->warning(sprintf(
+                    'Skipping linked entity %s:%d during ELN export: %s',
+                    $type,
+                    $link['entityid'],
+                    $ex->getMessage(),
+                ));
+            }
+        }
+        return $mentions;
     }
 }

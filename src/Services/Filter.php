@@ -15,7 +15,6 @@ namespace Elabftw\Services;
 use DateTimeImmutable;
 use Elabftw\Elabftw\FsTools;
 use Elabftw\Exceptions\ImproperActionException;
-use Elabftw\Models\Config;
 use HTMLPurifier;
 use HTMLPurifier_HTML5Config;
 
@@ -25,6 +24,12 @@ use function grapheme_strlen;
 use function strlen;
 use function strtolower;
 use function trim;
+use function _;
+use function ctype_alpha;
+use function explode;
+use function pathinfo;
+use function preg_replace;
+use function str_replace;
 
 /**
  * When values need to be filtered
@@ -223,6 +228,7 @@ final class Filter
             'language-makefile',
             'language-matlab',
             'language-perl',
+            'language-php',
             'language-python',
             'language-r',
             'language-ruby',

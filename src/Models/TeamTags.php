@@ -22,6 +22,10 @@ use Elabftw\Traits\SetIdTrait;
 use Override;
 use PDO;
 
+use function array_pop;
+use function explode;
+use function sprintf;
+
 /**
  * All about the tag but seen from a team perspective, not an entity
  */
@@ -132,15 +136,21 @@ final class TeamTags extends AbstractRest
             throw new IllegalActionException('Only an admin can delete a tag!');
         }
         // first unreference the tag
-        $sql = 'DELETE FROM tags2entity WHERE tag_id = :tag_id';
+        $sql = 'DELETE tags2entity
+            FROM tags2entity
+            INNER JOIN tags ON tags.id = tags2entity.tag_id
+            WHERE tags2entity.tag_id = :tag_id
+              AND tags.team = :team';
         $req = $this->Db->prepare($sql);
         $req->bindParam(':tag_id', $this->id, PDO::PARAM_INT);
+        $req->bindParam(':team', $this->Users->userData['team'], PDO::PARAM_INT);
         $this->Db->execute($req);
 
         // now delete it from the tags table
-        $sql = 'DELETE FROM tags WHERE id = :tag_id';
+        $sql = 'DELETE FROM tags WHERE id = :tag_id AND team = :team';
         $req = $this->Db->prepare($sql);
         $req->bindParam(':tag_id', $this->id, PDO::PARAM_INT);
+        $req->bindParam(':team', $this->Users->userData['team'], PDO::PARAM_INT);
         return $this->Db->execute($req);
     }
 
@@ -173,18 +183,24 @@ final class TeamTags extends AbstractRest
         // pop one out and keep this one
         $idToKeep = array_pop($idsArr);
 
-        $sql = 'UPDATE tags2entity SET tag_id = :target_tag_id WHERE tag_id = :tag_id';
+        $sql = 'UPDATE IGNORE tags2entity SET tag_id = :target_tag_id WHERE tag_id = :tag_id';
         $updateReq = $this->Db->prepare($sql);
         $updateReq->bindParam(':target_tag_id', $idToKeep, PDO::PARAM_INT);
+
+        $cleanupSql = 'DELETE FROM tags2entity WHERE tag_id = :tag_id';
+        $cleanupReq = $this->Db->prepare($cleanupSql);
+
         $sql = 'DELETE FROM tags WHERE id = :id';
         $deleteReq = $this->Db->prepare($sql);
 
         foreach ($idsArr as $id) {
-            // update the references with the id that we keep
+            // remap first
             $updateReq->bindParam(':tag_id', $id, PDO::PARAM_INT);
             $this->Db->execute($updateReq);
-
-            // and delete that id from the tags table
+            // remove any leftover rows that could not be remapped due to unique conflicts
+            $cleanupReq->bindParam(':tag_id', $id, PDO::PARAM_INT);
+            $this->Db->execute($cleanupReq);
+            // finally delete duplicate tag record
             $deleteReq->bindParam(':id', $id, PDO::PARAM_INT);
             $this->Db->execute($deleteReq);
         }

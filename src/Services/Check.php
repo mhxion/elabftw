@@ -30,6 +30,12 @@ use function array_keys;
 use function in_array;
 use function sprintf;
 use function strlen;
+use function _;
+use function implode;
+use function is_array;
+use function json_decode;
+use function preg_match;
+use function str_starts_with;
 
 /**
  * When values need to be checked
@@ -161,6 +167,14 @@ final class Check
             return $ak;
         }
         throw new ImproperActionException('Incorrect value for access key!');
+    }
+
+    public static function ror(string $ror): string
+    {
+        if (preg_match('/^0[a-hj-km-np-tv-z0-9]{6}[0-9]{2}$/i', $ror) === 1) {
+            return $ror;
+        }
+        throw new ImproperActionException('Incorrect value for ROR!');
     }
 
     /**

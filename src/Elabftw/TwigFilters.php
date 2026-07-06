@@ -20,6 +20,7 @@ use Elabftw\Enums\Metadata as MetadataEnum;
 use Elabftw\Enums\Scope;
 use Elabftw\Exceptions\ResourceNotFoundException;
 use Elabftw\Models\Users\Users;
+use Exception;
 
 use function is_array;
 use function implode;
@@ -29,6 +30,9 @@ use function is_string;
 use function json_decode;
 use function sprintf;
 use function nl2br;
+use function _;
+use function array_key_exists;
+use function in_array;
 
 /**
  * Twig filters
@@ -70,19 +74,34 @@ final class TwigFilters
         return Scope::toIcon(Scope::from($scope));
     }
 
+    public static function userid2fullname(?int $userid): string
+    {
+        // maybe user was deleted!
+        try {
+            $user = new Users((int) $userid);
+        } catch (ResourceNotFoundException) {
+            return 'Unknown';
+        }
+        return $user->userData['fullname'];
+    }
+
     /**
      * Process the metadata json string into html, for extra fields view mode
      * @psalm-suppress PossiblyUnusedMethod this method is used in twig templates
      */
     public static function formatMetadata(string $json): string
     {
-        $final = '';
-        $Metadata = new Metadata($json);
-        $extraFields = $Metadata->getExtraFields();
+        try {
+            $Metadata = new Metadata($json);
+            $extraFields = $Metadata->getExtraFields();
+        } catch (Exception $e) {
+            return self::displayMessage(Tools::eLabHtmlspecialchars($e->getMessage()), 'ko', false);
+        }
         if (empty($extraFields)) {
             return $Metadata->getRaw();
         }
 
+        $final = '';
         $grouped = $Metadata->getGroupedExtraFields();
 
         foreach ($grouped as $group) {
@@ -215,6 +234,8 @@ final class TwigFilters
             $depth ??= 0;
             if (is_array($value)) {
                 $value = self::array2String($value, $depth + 1);
+            } else {
+                $value = Tools::eLabHtmlspecialchars((string) $value);
             }
             $str .= '<details style="--depth: ' . $depth . '"><summary>' . $key . '</summary>' . $value . '</details>';
         }
@@ -224,7 +245,7 @@ final class TwigFilters
     public static function any2string(string|array|null $input): string
     {
         if (is_string($input)) {
-            return $input;
+            return Tools::eLabHtmlspecialchars($input);
         }
         if (is_array($input)) {
             return self::array2String($input);

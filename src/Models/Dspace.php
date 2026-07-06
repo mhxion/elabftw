@@ -30,6 +30,17 @@ use function str_starts_with;
 use function rtrim;
 use function sprintf;
 use function json_decode;
+use function _;
+use function array_column;
+use function array_merge;
+use function date;
+use function explode;
+use function fopen;
+use function implode;
+use function is_int;
+use function json_encode;
+use function str_replace;
+use function trim;
 
 /**
  * Connect with DSpace Repository
@@ -287,7 +298,15 @@ final class Dspace extends AbstractRest
         $tmpFileName = Tools::getUuidv4();
         $storage = Storage::EXPORTS->getStorage();
         $absolutePath = $storage->getAbsoluteUri($tmpFileName);
-        $maker = new MakeEln(App::getDefaultLogger(), new ZipStream(sendHttpHeaders: false), $this->requester, array($entity));
+        $maker = new MakeEln(
+            App::getDefaultLogger(),
+            new ZipStream(sendHttpHeaders: false),
+            $this->requester,
+            array($entity),
+            new Instance2Rors(),
+            new Teams2Rors($this->requester->getTeam(), false),
+            new Users2Rors($this->requester->getUserid(), false),
+        );
         $maker->writeToFile($absolutePath);
         $headers = $this->getAuthHeaders();
         $url = sprintf('%ssubmission/workspaceitems/%d', $this->host, $workspaceId);

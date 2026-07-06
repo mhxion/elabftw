@@ -22,6 +22,8 @@ use OneLogin\Saml2\Error;
 use OneLogin\Saml2\Settings;
 use Symfony\Component\HttpFoundation\Response;
 
+use function implode;
+
 /**
  *  This page displays an XML file with all the settings of the Service Provider
  */
@@ -35,7 +37,7 @@ try {
     try {
         $settingsArr = $IdpsHelper->getSettings();
     } catch (ResourceNotFoundException) {
-        throw new ImproperActionException('No Service Provider configured. Aborting.');
+        throw new ImproperActionException('No active IdP could be found. Configure at least one IdP.');
     }
 
     // Now we only validate SP settings

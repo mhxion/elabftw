@@ -14,13 +14,14 @@ namespace Elabftw\Models;
 use Elabftw\Enums\Action;
 use Elabftw\Enums\BasePermissions;
 use Elabftw\Enums\EntityType;
+use Elabftw\Enums\FileFromString;
 use Elabftw\Enums\Meaning;
 use Elabftw\Enums\AccessType;
 use Elabftw\Enums\State;
 use Elabftw\Exceptions\IllegalActionException;
 use Elabftw\Exceptions\ImproperActionException;
-use Elabftw\Exceptions\UnauthorizedException;
 use Elabftw\Exceptions\UnprocessableContentException;
+use Elabftw\Models\Users\AnonymousUser;
 use Elabftw\Models\Users\Users;
 use Elabftw\Params\DisplayParams;
 use Elabftw\Params\EntityParams;
@@ -28,6 +29,11 @@ use Elabftw\Params\ExtraFieldsOrderingParams;
 use Elabftw\Services\Check;
 use Elabftw\Traits\TestsUtilsTrait;
 use Symfony\Component\HttpFoundation\InputBag;
+
+use function count;
+use function is_array;
+use function json_decode;
+use function sprintf;
 
 class ExperimentsTest extends \PHPUnit\Framework\TestCase
 {
@@ -41,11 +47,6 @@ class ExperimentsTest extends \PHPUnit\Framework\TestCase
     {
         $this->Users = $this->getRandomUserInTeam(1);
         $this->Experiments = $this->getFreshExperimentWithGivenUser($this->Users);
-    }
-
-    public function testGetSurroundingBookers(): void
-    {
-        $this->assertEmpty($this->Experiments->getSurroundingBookers());
     }
 
     public function testCreateAndDestroy(): void
@@ -84,7 +85,7 @@ class ExperimentsTest extends \PHPUnit\Framework\TestCase
         $this->Experiments->destroy();
         $Templates = new Templates($this->Users);
         $tpl = $Templates->create(title: 'my template');
-        $new = $this->Experiments->createFromTemplate($tpl);
+        $new = $this->Experiments->postAction(Action::Create, array('template' => $tpl));
         $this->assertTrue((bool) Check::id($new));
         $newExp = new Experiments($this->Users, $new);
         $this->assertTrue($newExp->destroy());
@@ -182,10 +183,32 @@ class ExperimentsTest extends \PHPUnit\Framework\TestCase
         $user1 = new Users(1, 1);
         $user2 = new Users(2, 1);
         $exp = $this->getFreshExperimentWithGivenUser($user1);
-        $params = array('users_experiments' => array($user1->userid), 'userid' => $user2->userid);
+        $params = array('userid' => $user2->userid, 'team' => $user2->getTeam());
+        // no readOne after ownership change
         $exp->patch(Action::UpdateOwner, $params);
-        $this->assertEquals($exp->entityData['userid'], $user2->userid);
-        $this->assertEquals($exp->entityData['team'], $user2->team);
+        $entityData = $exp->readOne();
+        $this->assertEquals($user2->userid, $entityData['userid']);
+        $this->assertEquals($user2->team, $entityData['team']);
+    }
+
+    public function testUpdateOwnershipWithoutUsingDedicatedAction(): void
+    {
+        $User = $this->getRandomUserInTeam(1);
+        $exp = $this->getFreshExperimentWithGivenUser($User);
+        $params = array('userid' => $User->getUserid(), 'team' => $User->getTeam());
+        // needs to use Action::UpdateOwner if we're using userid/team params)
+        $this->expectException(ImproperActionException::class);
+        $exp->patch(Action::Update, $params);
+    }
+
+    public function testUpdateOwnershipWrongTeamCombination(): void
+    {
+        $user1 = new Users(1, 1);
+        $user2 = new Users(2, 2);
+        $exp = $this->getFreshExperimentWithGivenUser($user1);
+        $params = array('userid' => $user2->userid, 'team' => 17);
+        $this->expectException(UnprocessableContentException::class);
+        $exp->patch(Action::UpdateOwner, $params);
     }
 
     public function testUpdateOwnershipToDifferentTeamIsRestrictedToAdmins(): void
@@ -194,9 +217,8 @@ class ExperimentsTest extends \PHPUnit\Framework\TestCase
         $user1->isAdmin = false;
         $user2 = new Users(2, 2);
         $exp = $this->getFreshExperimentWithGivenUser($user1);
-        $params = array('users_experiments' => array($user1->userid), 'userid' => $user2->userid, 'team' => $user2->team);
-        $this->expectException(UnauthorizedException::class);
-        $exp->patch(Action::UpdateOwner, $params);
+        $this->expectException(IllegalActionException::class);
+        $exp->patch(Action::UpdateOwner, array('userid' => $user2->userid, 'team' => 2));
     }
 
     public function testUpdateWithNegativeInt(): void
@@ -240,8 +262,8 @@ class ExperimentsTest extends \PHPUnit\Framework\TestCase
 
     public function testDuplicate(): void
     {
-        $this->Experiments->ItemsLinks->setId(1);
-        $this->Experiments->ExperimentsLinks->setId(1);
+        $linkTargetExperimentId = $this->Experiments->create();
+        $this->Experiments->ExperimentsLinks->setId($linkTargetExperimentId);
         $this->Experiments->canOrExplode(AccessType::Read);
         // add specific permissions so we can check it later in the duplicated entry
         $canread = BasePermissions::Organization;
@@ -249,15 +271,21 @@ class ExperimentsTest extends \PHPUnit\Framework\TestCase
         // also add some custom settings like hiding main text
         $this->Experiments->patch(Action::Update, array('canread_base' => $canread->value, 'canwrite_base' => $canwrite->value, 'hide_main_text' => 1));
         // add some steps and links in there, too
-        $this->Experiments->Steps->postAction(Action::Create, array('body' => 'some step'));
-        $this->Experiments->ItemsLinks->postAction(Action::Create, array());
+        new Steps($this->Experiments)->postAction(Action::Create, array('body' => 'some step'));
         $this->Experiments->ExperimentsLinks->postAction(Action::Create, array());
-        $id = $this->Experiments->postAction(Action::Duplicate, array());
+        // add some uploads
+        $this->Experiments->Uploads->createFromString(FileFromString::Json, 'normal.json', '{}');
+        $archivedId = $this->Experiments->Uploads->createFromString(FileFromString::Json, 'archived.json', '{}');
+        $this->Experiments->Uploads->setId($archivedId);
+        $this->Experiments->Uploads->patch(Action::Archive, array());
+        $id = $this->Experiments->postAction(Action::Duplicate, array('copyFiles' => 1));
         $this->assertIsInt($id);
         $new = new Experiments($this->Users, $id);
         $this->assertEquals($canread->value, $new->entityData['canread_base']);
         $this->assertEquals($canwrite->value, $new->entityData['canwrite_base']);
         $this->assertEquals(1, $new->entityData['hide_main_text']);
+        // only active files are duplicated
+        $this->assertCount(1, $new->Uploads->readAll());
     }
 
     public function testInsertTags(): void
@@ -273,9 +301,11 @@ class ExperimentsTest extends \PHPUnit\Framework\TestCase
         $this->assertIsArray($res);
     }
 
-    public function testGetTimestampThisMonth(): void
+    public function testGetTimestampLastMonth(): void
     {
-        $this->assertEquals(4, $this->Experiments->getTimestampLastMonth());
+        $before = $this->Experiments->getTimestampLastMonth();
+        $this->Experiments->timestamp();
+        $this->assertSame($before + 1, $this->Experiments->getTimestampLastMonth());
     }
 
     public function testUpdateJsonField(): void
@@ -319,5 +349,32 @@ class ExperimentsTest extends \PHPUnit\Framework\TestCase
         $this->Experiments->setId($copy);
         $this->expectException(ImproperActionException::class);
         $this->Experiments->patch(Action::Update, array('custom_id' => 99));
+    }
+
+    // focused regression test for nullable filters to ensure mixed `NULL` and `IN (...)` conditions are grouped as a single SQL predicate.
+    public function testNullableCategoryFilterSqlIsGrouped(): void
+    {
+        $query = new InputBag(array('category' => 'null,1'));
+        $DisplayParams = new DisplayParams($this->Users, EntityType::Experiments, $query);
+        $expected = 'AND (entity.category IS NULL OR entity.category IN (1))';
+        $this->assertStringContainsString($expected, $DisplayParams->getFilterSql());
+    }
+
+    // test anonymous user can only read Entries with 'Permission:Full' (Everyone including anonymous users)
+    public function testReadAllForAnonymousUser(): void
+    {
+        // create experiments for each base permission
+        foreach (BasePermissions::cases() as $permission) {
+            $Experiments = $this->getFreshExperimentWithGivenUser($this->Users);
+            $Experiments->patch(Action::Update, array('canread_base' => $permission->value));
+        }
+
+        $AnonymousUser = new AnonymousUser(1);
+        $Experiments = new Experiments($AnonymousUser);
+        $experiments = $Experiments->readAll();
+
+        foreach ($experiments as $experiment) {
+            $this->assertSame(BasePermissions::Full->value, $experiment['canread_base']);
+        }
     }
 }

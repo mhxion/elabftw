@@ -28,6 +28,8 @@ use Elabftw\Models\Users\Users;
 use Elabftw\Traits\TestsUtilsTrait;
 use OneLogin\Saml2\Auth as SamlAuthLib;
 
+use function count;
+
 class SamlTest extends \PHPUnit\Framework\TestCase
 {
     use TestsUtilsTrait;
@@ -59,6 +61,7 @@ class SamlTest extends \PHPUnit\Framework\TestCase
             'fname_attr' => 'User.FirstName',
             'lname_attr' => 'User.LastName',
             'orgid_attr' => 'internal_id',
+            'orcid_attr' => 'orcidAttr',
         ));
         $IdpsCerts = new IdpsCerts($requester, $this->idpId);
         $IdpsCerts->postAction(Action::Create, array('x509' => $cert));

@@ -15,14 +15,16 @@ import { ApiC } from './api';
 import $ from 'jquery';
 import { SemverCompare } from './SemverCompare.class';
 import { on } from './handlers';
+import { showModalAndFocusFirstInput } from './common';
 
 function updateTsFieldsVisibility(select: HTMLSelectElement) {
   const noAccountTsa = ['dfn', 'digicert', 'sectigo', 'globalsign'];
+  const accountTsa = ['universign', 'dgn', 'evidency', 'deltablot'];
   if (noAccountTsa.includes(select.value)) {
     // mask all
     document.getElementById('ts_loginpass').toggleAttribute('hidden', true);
     document.getElementById('ts_urldiv').toggleAttribute('hidden', true);
-  } else if (select.value === 'universign' || select.value === 'dgn') {
+  } else if (accountTsa.includes(select.value)) {
     // only make loginpass visible
     document.getElementById('ts_loginpass').removeAttribute('hidden');
     document.getElementById('ts_urldiv').toggleAttribute('hidden', true);
@@ -170,18 +172,21 @@ function checkForUpdate() {
       warningDiv.appendChild(chevron);
       const text = document.createElement('span');
       text.classList.add('ml-1');
-      text.innerText = `${data.date} - A new version is available!`;
+      text.innerText = `${data.date} - ${i18next.t('new-version')}`;
       warningDiv.appendChild(text);
-      const updateLink = document.createElement('a');
-      updateLink.href = 'https://doc.elabftw.net/docs/install/update';
-      updateLink.classList.add('button', 'btn', 'btn-primary', 'text-white', 'ml-2');
-      updateLink.innerText = 'Update elabftw';
-      const changelogLink = document.createElement('a');
-      changelogLink.href = 'https://github.com/elabftw/elabftw/releases';
-      changelogLink.classList.add('button', 'btn', 'btn-primary', 'text-white', 'ml-2');
-      changelogLink.innerText = 'Read changelog';
-      warningDiv.appendChild(updateLink);
-      warningDiv.appendChild(changelogLink);
+      const updateButton = document.createElement('button');
+      updateButton.type = 'button';
+      updateButton.classList.add('btn', 'btn-primary', 'ml-2', 'external-link');
+      updateButton.innerText = i18next.t('view-upgrade-guide');
+      updateButton.addEventListener('click', () => window.open('https://doc.elabftw.net/docs/install/update', '_blank'));
+      const changelogButton = document.createElement('button');
+      changelogButton.type = 'button';
+      changelogButton.classList.add('btn', 'btn-primary', 'ml-2', 'external-link');
+      changelogButton.innerText = i18next.t('read-release-notes');
+      changelogButton.addEventListener('click', () => window.open('https://github.com/elabftw/elabftw/releases', '_blank'));
+
+      warningDiv.appendChild(updateButton);
+      warningDiv.appendChild(changelogButton);
       document.getElementById('versionNotifZone').appendChild(warningDiv);
     } else {
       // show a little green check if we have latest version
@@ -193,9 +198,88 @@ function checkForUpdate() {
   }).catch(error => latestVersionDiv.append(error));
 }
 
+const updateBrandingPreview = (brandingId: string, file: Blob): void => {
+  const img = document.querySelector<HTMLImageElement>(`img[data-branding-preview="${brandingId}"]`);
+
+  if (!img) {
+    reloadElements(['brandingLogos']);
+    return;
+  }
+
+  const previousObjectUrl = img.dataset.objectUrl;
+  if (previousObjectUrl) {
+    URL.revokeObjectURL(previousObjectUrl);
+  }
+
+  const objectUrl = URL.createObjectURL(file);
+  img.dataset.objectUrl = objectUrl;
+  img.src = objectUrl;
+};
+
+const uploadBranding = async (brandingId: string, file: Blob, filename: string): Promise<void> => {
+  const formData = new FormData();
+  formData.append('action', 'update');
+  formData.append('file', file, filename);
+
+  await ApiC.post(`instance/branding/${brandingId}`, formData);
+
+  updateBrandingPreview(brandingId, file);
+};
+
+const defaultBrandingAssets: Record<string, string> = {
+  '1': '/assets/images/logo-header.svg',
+  '2': '/assets/images/logo-light.svg',
+  '3': '/assets/images/logo-dark.svg',
+  '4': '/assets/images/favicon.svg',
+};
+
 if (window.location.pathname === '/sysconfig.php') {
 
   checkForUpdate();
+
+  document.addEventListener('change', async event => {
+    const input = event.target;
+
+    if (!(input instanceof HTMLInputElement) || input.dataset.action !== 'upload-branding') {
+      return;
+    }
+
+    const brandingId = input.dataset.target;
+    const file = input.files?.[0];
+
+    if (!brandingId || !file) {
+      return;
+    }
+
+    try {
+      await uploadBranding(brandingId, file, file.name);
+    } finally {
+      input.value = '';
+    }
+  });
+
+  on('reset-branding', async (el: HTMLElement) => {
+    const brandingId = el.dataset.target;
+
+    if (!brandingId) {
+      return;
+    }
+
+    const url = defaultBrandingAssets[brandingId];
+
+    if (!url) {
+      return;
+    }
+
+    const res = await fetch(url, { cache: 'no-cache' });
+    if (!res.ok) {
+      throw new Error(`Could not load default branding asset: ${url}`);
+    }
+    const blob = await res.blob();
+    const filename = url.split('/').pop() ?? 'branding.svg';
+
+    await uploadBranding(brandingId, blob, filename);
+  });
 
   // TEST EMAIL
   on('send-test-email', async (el: HTMLElement, event: Event) => {
@@ -325,8 +409,9 @@ if (window.location.pathname === '/sysconfig.php') {
       (document.getElementById('idpModal_lname_attr') as HTMLInputElement).value = idp.lname_attr;
       (document.getElementById('idpModal_team_attr') as HTMLInputElement).value = idp.team_attr;
       (document.getElementById('idpModal_orgid_attr') as HTMLInputElement).value = idp.orgid_attr;
+      (document.getElementById('idpModal_orcid_attr') as HTMLInputElement).value = idp.orcid_attr;
       document.getElementById('idpModalSaveButton').dataset.id = idp.id;
-      $('#idpModal').modal('show');
+      showModalAndFocusFirstInput('#idpModal');
     });
   });
 

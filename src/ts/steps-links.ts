@@ -24,6 +24,8 @@ import { ApiC } from './api';
 import { entity } from './getEntity';
 import { on } from './handlers';
 
+addAutocompleteToLinkInputs();
+
 // FINISH: outside if stepsDiv because can be from Todolist panel
 $(document).on('click', 'input[type=checkbox].stepbox', function(e) {
   // ask for confirmation before un-finishing a step
@@ -72,13 +74,10 @@ if (document.getElementById('stepsDiv')) {
 
   on('step-update-deadline', (el: HTMLElement) => {
     const value = (document.getElementById('stepSelectDeadline_' + el.dataset.stepid) as HTMLSelectElement).value;
-    StepC.update(parseInt(el.dataset.stepid, 10), value, Target.Deadline).then(() => {
-      reloadElements(['stepsDiv']);
+    const stepid = parseInt(el.dataset.stepid, 10);
+    StepC.update(stepid, value, Target.Deadline).then(() => {
+      StepC.notif(stepid).then(() => reloadElements(['stepsDiv']));
     });
-  });
-
-  on('step-toggle-deadline-notif', (el: HTMLElement) => {
-    StepC.notif(parseInt(el.dataset.stepid, 10)).then(() => reloadElements(['stepsDiv']));
   });
 
   on('step-destroy-deadline', (el: HTMLElement) => {
@@ -176,6 +175,5 @@ if (document.getElementById('stepsDiv')) {
     }
   });
   // AUTOCOMPLETE
-  addAutocompleteToLinkInputs();
   addAutocompleteToCompoundsInputs();
 }

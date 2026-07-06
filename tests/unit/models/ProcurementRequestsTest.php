@@ -13,26 +13,43 @@ namespace Elabftw\Models;
 
 use Elabftw\Enums\Action;
 use Elabftw\Enums\ProcurementState;
-use Elabftw\Models\Users\Users;
+use Elabftw\Exceptions\ForbiddenException;
+use Elabftw\Exceptions\ResourceNotFoundException;
+use Elabftw\Traits\TestsUtilsTrait;
 
 class ProcurementRequestsTest extends \PHPUnit\Framework\TestCase
 {
+    use TestsUtilsTrait;
+
     private ProcurementRequests $pr;
+
+    private ProcurementRequests $otherTeamPr;
 
     protected function setUp(): void
     {
-        $this->pr = new ProcurementRequests(new Teams(new Users(1, 1), 1));
+        $this->pr = new ProcurementRequests(new Teams($this->getRandomUserInTeam(1), 1));
+        $this->otherTeamPr = new ProcurementRequests(new Teams($this->getRandomUserInTeam(2), 2));
     }
 
     public function testCreate(): void
     {
-        $entityId = 3;
-        $id = $this->pr->postAction(Action::Create, array('entity_id' => $entityId, 'qty_ordered' => 1, 'body', 'quote' => 12));
+        $Entity = $this->getFreshItem();
+        $entityId = $Entity->id;
+        $id = $this->pr->postAction(Action::Create, array('entity_id' => $entityId, 'qty_ordered' => 1, 'body' => '', 'quote' => 12));
         $this->assertIsInt($id);
         $this->pr->setId($id);
         $this->assertIsArray($this->pr->readOne());
         $this->assertIsArray($this->pr->readActiveForEntity($entityId));
+        $this->assertNotEmpty($this->pr->readActiveForEntity($entityId));
         $this->assertIsArray($this->pr->patch(Action::Update, array('qty_received' => 2)));
+    }
+
+    public function testPostNoAuthorizedUser(): void
+    {
+        $Entity = $this->getFreshItem();
+        $entityId = $Entity->id;
+        $this->expectException(ForbiddenException::class);
+        $id = $this->otherTeamPr->postAction(Action::Create, array('entity_id' => $entityId, 'qty_ordered' => 1, 'body' => '', 'quote' => 12));
     }
 
     public function testRead(): void
@@ -41,6 +58,13 @@ class ProcurementRequestsTest extends \PHPUnit\Framework\TestCase
         $this->assertIsArray($res);
         $this->assertNotEmpty($res);
         $this->assertIsString($res[0]['state_human']);
+    }
+
+    public function testReadRecordNotFound(): void
+    {
+        $this->pr->setId(2);
+        $this->expectException(ResourceNotFoundException::class);
+        $this->pr->readOne();
     }
 
     public function testGetApiPath(): void
@@ -53,5 +77,26 @@ class ProcurementRequestsTest extends \PHPUnit\Framework\TestCase
         $this->pr->setId(1);
         $this->assertTrue($this->pr->destroy());
         $this->assertEquals(ProcurementState::Cancelled->value, $this->pr->readOne()['state']);
+    }
+
+    public function testUpdateRecordNotFound(): void
+    {
+        $this->pr->setId(2);
+        $this->expectException(ResourceNotFoundException::class);
+        $this->pr->patch(Action::Update, array('qty_received' => 2));
+    }
+
+    public function testReadNonAccessibleRecord(): void
+    {
+        $this->otherTeamPr->setId(1);
+        $this->expectException(ResourceNotFoundException::class);
+        $this->otherTeamPr->readOne();
+    }
+
+    public function testUpdateNonAccessibleRecord(): void
+    {
+        $this->otherTeamPr->setId(1);
+        $this->expectException(ResourceNotFoundException::class);
+        $this->otherTeamPr->patch(Action::Update, array('qty_received' => 2));
     }
 }

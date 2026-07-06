@@ -14,12 +14,18 @@ namespace Elabftw\Models;
 use Elabftw\Elabftw\Db;
 use Elabftw\Enums\Action;
 use Elabftw\Enums\BasePermissions;
+use Elabftw\Exceptions\ForbiddenException;
+use Elabftw\Models\Links\Experiments2ExperimentsLinks;
 use Elabftw\Models\Links\Experiments2ItemsLinks;
 use Elabftw\Models\Links\ItemsTypes2ItemsLinks;
 use Elabftw\Models\Users\AuthenticatedUser;
 use Elabftw\Models\Users\Users;
 use Elabftw\Traits\TestsUtilsTrait;
 use PDO;
+
+use function array_column;
+use function count;
+use function sprintf;
 
 class LinksTest extends \PHPUnit\Framework\TestCase
 {
@@ -165,10 +171,7 @@ class LinksTest extends \PHPUnit\Framework\TestCase
 
         // User 1 creates experiment A that is visible to the team
         $Experiments = $this->getFreshExperiment();
-        $ExperimentAId = $Experiments->create(
-            title: 'Experiment A',
-            canreadBase: BasePermissions::Team,
-        );
+        $ExperimentAId = $Experiments->create(title: 'Experiment A');
 
         // User 1 creates experiment B that is visible only to themself
         $secretTitle = 'Experiment B - This title shall not be visible to user 2 after importing links';
@@ -184,10 +187,7 @@ class LinksTest extends \PHPUnit\Framework\TestCase
 
         // User 2 creates experiment C and adds a link to experiment A
         $Experiments = new Experiments(new Users(2, 1));
-        $ExperimentCId = $Experiments->create(
-            title: 'Experiment C',
-            canreadBase: BasePermissions::Team,
-        );
+        $ExperimentCId = $Experiments->create(title: 'Experiment C');
         $Experiments->setId($ExperimentCId);
         $Experiments->ExperimentsLinks->setId($ExperimentAId);
         $Experiments->ExperimentsLinks->postAction(Action::Create, array());
@@ -221,10 +221,7 @@ class LinksTest extends \PHPUnit\Framework\TestCase
 
         // User 1 creates experiment B that is visible to their team
         $secretTitle = 'Experiment B - This title shall not be visible to user 5 after importing links';
-        $ExperimentBId = $Experiments->create(
-            title: $secretTitle,
-            canreadBase: BasePermissions::Team,
-        );
+        $ExperimentBId = $Experiments->create(title: $secretTitle);
 
         // Experiment A links to experiment B
         $Experiments->setId($ExperimentAId);
@@ -232,7 +229,8 @@ class LinksTest extends \PHPUnit\Framework\TestCase
         $Experiments->ExperimentsLinks->postAction(Action::Create, array());
 
         // User 5 from team bravo creates experiment C and adds a link to experiment A
-        $Experiments = new Experiments(new Users(5, 2));
+        // Need AuthenticatedUser so organization-wide permissions are evaluated like in the app
+        $Experiments = new Experiments(new AuthenticatedUser(5, 2));
         $ExperimentCId = $Experiments->create(
             title: 'Experiment C',
             canreadBase: BasePermissions::Organization,
@@ -296,7 +294,7 @@ class LinksTest extends \PHPUnit\Framework\TestCase
         $req->bindValue(':canbook', AbstractEntity::EMPTY_CAN_JSON);
         $req->bindValue(':canread_target', AbstractEntity::EMPTY_CAN_JSON);
         $req->bindValue(':canwrite_target', AbstractEntity::EMPTY_CAN_JSON);
-        $req->execute();
+        $this->Db->execute($req);
 
         $ItemsTypes = new ItemsTypes($User, $ItemB->id);
         $this->assertSame($ItemsTypes->id, $ItemB->id);
@@ -306,5 +304,20 @@ class LinksTest extends \PHPUnit\Framework\TestCase
         $templateLinks = $ItemsTypes->ItemsLinks->readRelated();
         $this->assertNotEquals($itemsLinks, $templateLinks);
         $this->assertEmpty($ItemsTypes->ItemsLinks->readAll());
+    }
+
+    public function testLinkingToEntryWithoutReadAccessToTarget(): void
+    {
+        $user = $this->getRandomUserInTeam(1);
+        $Experiments = new Experiments($user);
+        // default permissions will make it unreadable from a user from another team: no need to restrict permissions further
+        $targetId = $Experiments->postAction(Action::Create, array());
+
+        $attacker = $this->getRandomUserInTeam(2);
+        $Experiments = new Experiments($attacker);
+        $id = $Experiments->postAction(Action::Create, array());
+        $Experiments->setId($id);
+        $this->expectException(ForbiddenException::class);
+        new Experiments2ExperimentsLinks($Experiments, $targetId)->postAction(Action::Create, array());
     }
 }

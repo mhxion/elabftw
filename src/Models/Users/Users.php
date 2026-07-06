@@ -17,7 +17,7 @@ use Elabftw\AuditEvent\UserAttributeChanged;
 use Elabftw\AuditEvent\UserDeleted;
 use Elabftw\AuditEvent\UserRegister;
 use Elabftw\Auth\Local;
-use Elabftw\Elabftw\App;
+use Elabftw\Elabftw\BuildInfo;
 use Elabftw\Elabftw\Db;
 use Elabftw\Enums\Action;
 use Elabftw\Enums\BasePermissions;
@@ -51,6 +51,16 @@ use Elabftw\Services\UsersHelper;
 use PDO;
 use Symfony\Component\HttpFoundation\Request;
 use Override;
+use RuntimeException;
+
+use function _;
+use function array_column;
+use function array_map;
+use function implode;
+use function in_array;
+use function json_decode;
+use function sprintf;
+use function strtolower;
 
 /**
  * Users
@@ -92,6 +102,7 @@ class Users extends AbstractRest
         bool $alertAdmin = true,
         ?string $validUntil = null,
         ?string $orgid = null,
+        ?string $orcid = null,
         bool $allowTeamCreation = false,
         bool $skipDomainValidation = false,
         BinaryValue $canManageCompounds = BinaryValue::False,
@@ -132,6 +143,7 @@ class Users extends AbstractRest
             `lang`,
             `valid_until`,
             `orgid`,
+            `orcid`,
             `is_sysadmin`,
             `default_read`,
             `default_write`,
@@ -147,6 +159,7 @@ class Users extends AbstractRest
             :lang,
             :valid_until,
             :orgid,
+            :orcid,
             :is_sysadmin,
             :default_read,
             :default_write,
@@ -163,21 +176,22 @@ class Users extends AbstractRest
         $req->bindValue(':lang', $Config->configArr['lang']);
         $req->bindValue(':valid_until', $validUntil);
         $req->bindValue(':orgid', $orgid);
+        $req->bindValue(':orcid', $orcid);
         $req->bindValue(':is_sysadmin', $isSysadmin, PDO::PARAM_INT);
         $req->bindValue(':default_read', $defaultCan);
         $req->bindValue(':default_write', $defaultCan);
-        $req->bindValue(':last_seen_version', App::INSTALLED_VERSION_INT);
+        $req->bindValue(':last_seen_version', BuildInfo::VERSION_INT);
         $req->bindValue(':can_manage_compounds', $canManageCompounds->value);
         $req->bindValue(':can_manage_inventory_locations', $canManageInventoryLocations->value);
         $this->Db->execute($req);
-        $userid = $this->Db->lastInsertId();
+        $this->userid = $this->Db->lastInsertId();
 
         // check if the team is empty before adding the user to the team
         $isFirstUser = $TeamsHelper->isFirstUserInTeam();
         // now add the user to the team
         $Users2Teams = new Users2Teams($this->requester);
         $Users2Teams->addUserToTeams(
-            $userid,
+            $this->userid,
             array_column($teams, 'id'),
             // transform Sysadmin to Admin because users2teams.is_admin is 1 (Admin) or 0 (User)
             ($usergroup === Usergroup::Sysadmin || $usergroup === Usergroup::Admin)
@@ -186,21 +200,23 @@ class Users extends AbstractRest
             $isValidated,
         );
         if ($alertAdmin && !$isFirstUser) {
-            $this->notifyAdmins($TeamsHelper->getAllAdminsUserid(), $userid, $isValidated, $teams[0]['name']);
+            $this->notifyAdmins($TeamsHelper->getAllAdminsUserid(), $this->userid, $isValidated, $teams[0]['name']);
         }
+        $targetUser = new self($this->userid);
         if ($isValidated) {
             // send the instance level onboarding email
             if ($Config->configArr['onboarding_email_active'] === '1') {
-                new OnboardingEmail(-1)->create($userid);
+                new OnboardingEmail($targetUser, -1)->create();
             }
         } else {
-            $Notifications = new SelfNeedValidation();
-            $Notifications->create($userid);
+            $Notifications = new SelfNeedValidation($targetUser);
+            $Notifications->create();
             // set a flag to show correct message to user
             $this->needValidation = true;
         }
-        AuditLogs::create(new UserRegister($this->requester->userid ?? 0, $userid));
-        return $userid;
+        // it's okay to not have requester for this (register page)
+        AuditLogs::create(new UserRegister($this->requester->userid ?? 0, $this->userid));
+        return $this->userid;
     }
 
     /**
@@ -236,8 +252,6 @@ class Users extends AbstractRest
             $admins = 'AND u2t_all.is_admin = 1';
         }
 
-        // NOTE: $tmpTable avoids the use of DISTINCT, so we are able to use ORDER BY with teams_id.
-        // Side effect: User is shown in team with lowest id
         $sql = "SELECT
           u.userid,
           u.firstname,
@@ -261,7 +275,7 @@ class Users extends AbstractRest
           u.orcid,
           u.validated,
           u.auth_service,
-          sk.pubkey                         AS sig_pubkey,
+          sk.pubkey AS sig_pubkey,
           JSON_ARRAYAGG(
              JSON_OBJECT(
                'id',   u2t_all.teams_id,
@@ -314,9 +328,7 @@ class Users extends AbstractRest
           u.auth_service,
           sk.pubkey
 
-        ORDER BY
-          MIN(u2t_all.teams_id) ASC,
-          u.lastname       ASC;';
+        ORDER BY u.userid ASC;';
 
         $req = $this->Db->prepare($sql);
         $req->bindValue(':query', '%' . $query . '%');
@@ -354,6 +366,16 @@ class Users extends AbstractRest
     public function readAllActiveFromTeam(): array
     {
         return $this->readFromQuery(teamId: $this->userData['team'], onlyActive: true);
+    }
+
+    public function getTeam(): int
+    {
+        return $this->team ?? throw new RuntimeException('User has no team attribute!');
+    }
+
+    public function getUserid(): int
+    {
+        return $this->userid ?? throw new RuntimeException('User has no userid attribute!');
     }
 
     /**
@@ -463,14 +485,15 @@ class Users extends AbstractRest
                     new Users2Teams($this->requester)->create($this->userData['userid'], $team, isValidated: $this->userData['validated'] === 1);
                 }
             )(),
+            Action::Archive => (new Users2Teams($this->requester))->archive($this->getUserid()),
             Action::Disable2fa => $this->disable2fa(),
-            Action::PatchUser2Team => (new Users2Teams($this->requester))->patchUser2Team($params, $this->userid ?? 0),
+            Action::PatchUser2Team => (new Users2Teams($this->requester))->patchUser2Team($params, $this->getUserid()),
             Action::Unreference => (new Users2Teams($this->requester))->destroy($this->userData['userid'], (int) $params['team']),
             Action::UpdatePassword => $this->updatePassword($params),
             Action::Update => (
                 function () use ($params) {
                     // only a sysadmin can edit anything about another sysadmin
-                    if (!$this->requester->isSysadmin() && $this->userid !== $this->requester->userid && $this->isSysadmin()) {
+                    if (!$this->requester->isSysadmin() && $this->getUserid() !== $this->requester->getUserid() && $this->isSysadmin()) {
                         throw new IllegalActionException('A sysadmin level account is required to edit another sysadmin account.');
                     }
                     $Config = Config::getConfig();
@@ -518,7 +541,7 @@ class Users extends AbstractRest
         $sql = 'SELECT allow_untrusted, auth_lock_time > (NOW() - INTERVAL 1 HOUR) AS currently_locked FROM users WHERE userid = :userid';
         $req = $this->Db->prepare($sql);
         $req->bindParam(':userid', $this->userData['userid'], PDO::PARAM_INT);
-        $req->execute();
+        $this->Db->execute($req);
         $res = $req->fetch();
 
         if ($res['allow_untrusted'] === 1) {
@@ -547,7 +570,7 @@ class Users extends AbstractRest
         $req->bindParam(':userid', $this->userData['userid'], PDO::PARAM_INT);
         $res = $this->Db->execute($req);
         if ($res) {
-            AuditLogs::create(new UserDeleted($this->requester->userid ?? 0, $this->userid ?? 0));
+            AuditLogs::create(new UserDeleted($this->requester->getUserid(), $this->getUserid()));
         }
         return $res;
     }
@@ -558,7 +581,7 @@ class Users extends AbstractRest
     public function isAdminOf(int $userid): bool
     {
         // consider that we are admin of ourselves and that if you have can_manage_users2teams you're kinda an Admin of the user
-        if ($this->userid === $userid || $this->isSysadmin() || $this->userData['can_manage_users2teams']) {
+        if ($this->getUserid() === $userid || $this->isSysadmin() || $this->userData['can_manage_users2teams']) {
             return true;
         }
         // check if in the teams we have in common, the potential admin is admin
@@ -570,9 +593,9 @@ class Users extends AbstractRest
                     AND u2.users_id = :user_userid
                     AND u1.is_admin = 1';
         $req = $this->Db->prepare($sql);
-        $req->bindParam(':admin_userid', $this->userid, PDO::PARAM_INT);
+        $req->bindValue(':admin_userid', $this->getUserid(), PDO::PARAM_INT);
         $req->bindParam(':user_userid', $userid, PDO::PARAM_INT);
-        $req->execute();
+        $this->Db->execute($req);
         return $req->rowCount() >= 1;
     }
 
@@ -644,8 +667,8 @@ class Users extends AbstractRest
             && (string) $this->userData[$column->value] !== (string) $content
         ) {
             AuditLogs::create(new UserAttributeChanged(
-                $this->requester->userid ?? 0,
-                $this->userid ?? 0,
+                $this->requester->getUserid(),
+                $this->getUserid(),
                 $column->value,
                 (string) $this->userData[$column->value],
                 (string) $content,
@@ -675,7 +698,10 @@ class Users extends AbstractRest
         if (in_array($params->getTarget(), array('can_manage_compounds', 'can_manage_inventory_locations', 'can_manage_users2teams', 'is_sysadmin'), true)) {
             $this->requester->isSysadminOrExplode();
         }
-
+        // columns that can only be modified by admin requester
+        if (in_array($params->getTarget(), array('validated', 'valid_until'), true)) {
+            $this->requester->isAdminOrExplode();
+        }
         // early bail out if existing and new values are the same
         if ($params->getContent() === $this->userData[$params->getColumn()]) {
             return true;
@@ -735,7 +761,7 @@ class Users extends AbstractRest
               sig_keys.pubkey,
               sig_keys.privkey";
         $req = $this->Db->prepare($sql);
-        $req->bindValue(':userid', $this->userid, PDO::PARAM_INT);
+        $req->bindValue(':userid', $this->getUserid(), PDO::PARAM_INT);
         $req->bindValue(':state', State::Normal->value, PDO::PARAM_INT);
         $this->Db->execute($req);
 
@@ -755,6 +781,18 @@ class Users extends AbstractRest
     public function isSysadminOrExplode(): void
     {
         if ($this->isSysadmin() === false) {
+            throw new IllegalActionException(Messages::InsufficientPermissions->toHuman());
+        }
+    }
+
+    public function isAdmin(): bool
+    {
+        return $this->isAdmin === true;
+    }
+
+    public function isAdminOrExplode(): void
+    {
+        if ($this->isAdmin() === false) {
             throw new IllegalActionException(Messages::InsufficientPermissions->toHuman());
         }
     }
@@ -808,14 +846,14 @@ class Users extends AbstractRest
     private function canReadOrExplode(): void
     {
         // it's ourself or we are sysadmin
-        if ($this->requester->userid === $this->userid || $this->requester->isSysadmin()) {
+        if ($this->requester->getUserid() === $this->getUserid() || $this->requester->isSysadmin()) {
             return;
         }
         if (!$this->requester->isAdmin && !$this->isSelf()) {
             throw new IllegalActionException('This endpoint requires admin privileges to access other users.');
         }
         // check we view user of our team, unless we are sysadmin and we can access it
-        if ($this->userid !== null && !$this->requester->isAdminOf($this->userid)) {
+        if (!$this->requester->isAdminOf($this->getUserid())) {
             throw new IllegalActionException('User tried to access user from other team.');
         }
     }
@@ -841,8 +879,8 @@ class Users extends AbstractRest
         $req->bindParam(':userid', $this->userData['userid'], PDO::PARAM_INT);
         $res = $this->Db->execute($req);
         AuditLogs::create(new PasswordChanged(
-            $this->requester->userid ?? 0,
-            $this->userid ?? 0,
+            $this->requester->getUserid(),
+            $this->getUserid(),
             'password',
             'the old password',
             'the new password',
@@ -873,12 +911,13 @@ class Users extends AbstractRest
      */
     private function validate(): array
     {
+        $this->requester->isAdminOrExplode();
         $this->rawUpdate(UsersColumn::Validated, 1);
-        $Notifications = new SelfIsValidated();
-        $Notifications->create($this->userData['userid']);
+        $Notifications = new SelfIsValidated($this);
+        $Notifications->create();
         // send the instance level onboarding email only once the user is validated (avoid infoleak for untrusted users)
         if (Config::getConfig()->configArr['onboarding_email_active'] === '1') {
-            new OnboardingEmail(-1)->create($this->userData['userid']);
+            new OnboardingEmail($this, -1)->create();
         }
         // now send an email for each team the user is in
         foreach ($this->userData['teams'] as $team) {
@@ -890,12 +929,10 @@ class Users extends AbstractRest
 
     private function notifyAdmins(array $admins, int $userid, bool $isValidated, string $team): void
     {
-        $Notifications = new UserCreated($userid, $team);
-        if (!$isValidated) {
-            $Notifications = new UserNeedValidation($userid, $team);
-        }
         foreach ($admins as $admin) {
-            $Notifications->create($admin);
+            $adminUser = new self($admin);
+            $Notifications = $isValidated ? new UserCreated($adminUser, $userid, $team) : new UserNeedValidation($adminUser, $userid, $team);
+            $Notifications->create();
         }
     }
 }
